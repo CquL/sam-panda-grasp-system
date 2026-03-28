@@ -44,7 +44,7 @@ check_dir() {
   fi
 }
 
-echo "== SAM Grasp System Export Environment Check =="
+echo "== SAM Panda Grasp System Environment Check =="
 echo "Repository root: $ROOT_DIR"
 echo
 

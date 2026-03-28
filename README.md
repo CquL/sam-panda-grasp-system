@@ -89,7 +89,7 @@ flowchart LR
 ## 仓库结构
 
 ```text
-sam_grasp_system_export/
+sam-panda-grasp-system/
 ├── src/
 │   ├── CMakeLists.txt
 │   ├── sam_perception/
@@ -142,7 +142,7 @@ sam_grasp_system_export/
 ### 1. 做环境自检
 
 ```bash
-cd /path/to/sam_grasp_system_export
+cd /path/to/sam-panda-grasp-system
 bash scripts/check_export_env.sh
 ```
 
