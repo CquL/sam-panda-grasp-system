@@ -1,0 +1,5 @@
+<launch>
+  <node pkg="sam_perception" type="check_models.py" name="check_models" output="screen"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+</launch>

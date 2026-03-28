@@ -1,0 +1,22 @@
+  <!-- 启动环境 加载gazebo世界，rviz-->
+<launch>
+  <include file="$(find panda_moveit_config)/launch/demo_gazebo_supermarket.launch">
+    <arg name="paused" value="false"/>
+    <arg name="gazebo_gui" value="true"/>
+  </include>
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="depth_camera_tf"
+      args="0.213036 -0.009588 0.532843 0 0 -1.57 world depth_camera_link 100" >
+  </node>
+
+
+  <!-- <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen">
+        
+        <env name="LD_PRELOAD" value="/usr/lib/x86_64-linux-gnu/libffi.so.7" />
+
+        <param name="model_type" value="vit_b" />
+  </node> -->
+
+
+</launch>

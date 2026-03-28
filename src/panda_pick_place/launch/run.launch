@@ -1,0 +1,51 @@
+<launch>
+  <!-- 规划器名字参数，可在命令行覆盖 -->
+  <arg name="planner_id" default="PRMstarkConfigDefault" />
+  <!--
+    planner_id 可选示例（具体以你自己的
+    panda_moveit_config/config/ompl_planning.yaml 为准）：
+
+    - RRTConnectkConfigDefault   常用默认，速度较快，适合大多数场景
+    - RRTstarkConfigDefault      路径质量更好，一般比 RRTConnect 慢
+    - RRTkConfigDefault          标准 RRT，探索性更强
+    - PRMkConfigDefault          PRM，适合环境固定、反复多次规划
+    - PRMstarkConfigDefault      PRM*，路径更优，速度略慢
+    - LBKPIECEkConfigDefault     对高维空间表现还可以
+    - KPIECEkConfigDefault       带投影的 KPIECE，适合关节空间规划
+    - BKPIECEkConfigDefault      双向 KPIECE
+    - ESTkConfigDefault          EST，随机扩展树算法
+    - SBLkConfigDefault          SBL，双向线段树
+
+    👉 实际可用的名字请打开 ompl_planning.yaml 对照，
+       只要把那里面 "planner_configs" 下面的 key 写到这里即可。
+  -->
+
+  <arg name="object_type" default="cylinder" doc="抓取物体类型：cube 或 cylinder"/>
+  <!--
+    抓取目标：cube 或 cylinder
+  -->
+  <!-- <param name="object_type" value="cylinder"/> -->
+
+  <arg name="obstacle_x" default="0.63" />
+  <arg name="obstacle_y" default="0.0" />
+  <arg name="obstacle_z" default="0.25" />
+
+  <arg name="obstacle_size_x" default="0.2" />
+  <arg name="obstacle_size_y" default="0.2" />
+  <arg name="obstacle_size_z" default="0.5" />
+
+
+  <node pkg="panda_pick_place"
+        type="demo.py"
+        name="pick_place_node"
+        output="screen">
+    <param name="planner_id" value="$(arg planner_id)" />
+    <param name="object_type" value="$(arg object_type)" />  
+
+
+  </node>
+
+
+
+
+</launch>

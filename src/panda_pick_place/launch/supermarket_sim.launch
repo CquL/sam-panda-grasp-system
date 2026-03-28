@@ -1,0 +1,37 @@
+  <!-- 启动环境 加载gazebo世界，rviz，打开graspnet，yolo -->
+<launch>
+  <include file="$(find panda_moveit_config)/launch/demo_gazebo_supermarket.launch">
+    <arg name="paused" value="false"/>
+    <arg name="gazebo_gui" value="true"/>
+  </include>
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="depth_camera_tf"
+      args="0.164000 -0.201491 0.493261 0 0 -1.57 world depth_camera_link 100" />
+
+  <node pkg="yolov5_ros" type="detect.py" name="yolov5_detector" output="screen"
+          launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      <param name="weights" value="yolov5m.pt"/>
+      <param name="data" value="$(find yolov5_ros)/src/yolov5/data/coco128.yaml"/>
+      <param name="confidence_threshold" value="0.25"/>
+      <param name="iou_threshold" value="0.45"/>
+      <param name="maximum_detections" value="1000"/>
+      <param name="device" value="0"/>
+      <param name="agnostic_nms" value="true"/>
+      <param name="line_thickness" value="3"/>
+      <param name="dnn" value="true"/>
+      <param name="half" value="false"/>
+      
+      <param name="input_image_topic" value="/camera/color/image_raw"/>
+      <param name="output_topic" value="/yolov5/detections"/>
+      
+      <param name="view_image" value="true"/>
+      <param name="publish_image" value="true"/>
+      <param name="output_image_topic" value="/yolov5/image_out"/>
+  </node>
+
+  <node pkg="grasp_detector_ros" type="grasp_inference_node.py" name="grasp_generator_node" output="screen"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+
+</launch>

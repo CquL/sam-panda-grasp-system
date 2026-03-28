@@ -1,0 +1,54 @@
+<launch>
+    <!-- 常用候选:
+       panda_manipulator[RRTConnect]
+       panda_manipulator[RRT]
+       panda_manipulator[RRTstar]
+       panda_manipulator[PRMstar]
+       panda_manipulator[BITstar]
+       panda_manipulator[ABITstar]
+    -->
+  <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
+
+
+  <include file="$(find panda_moveit_config)/launch/demo_gazebo_system.launch">
+    <arg name="paused" value="false"/>
+    <arg name="gazebo_gui" value="true"/>
+  </include>
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="depth_camera_tf"
+      args="0.164000 -0.201491 0.493261 0 0 -1.57 world depth_camera_link 100" >
+  </node>
+
+  <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
+      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+    <param name="model_type" value="vit_b" />
+    <param name="approach_offset" value="0.02" />
+  </node>
+
+  <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
+      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+    <param name="model_type" value="vit_b" />
+    <param name="debug_o3d" value="true" />
+  </node>
+
+
+  <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
+        launch-prefix="/usr/bin/python3">
+        <param name="planner_id" value="$(arg planner_id)" />
+  </node>
+
+
+  <!-- <node pkg="panda_pick_place" type="control_panel.py" name="demo_control_panel" output="screen"
+        launch-prefix="/usr/bin/python3">
+  </node> -->
+
+  <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
+        launch-prefix="/usr/bin/python3">
+  </node>
+
+  <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+
+</launch>

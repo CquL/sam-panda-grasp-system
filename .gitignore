@@ -1,0 +1,23 @@
+build/
+devel/
+install/
+logs/
+log/
+.catkin_tools/
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+.DS_Store
+.env
+
+# Large or machine-local model artifacts
+src/sam_perception/models/*.pth
+src/sam_perception/models/*.pt
+src/sam_perception/models/*.ckpt
+
+# ROS runtime artifacts
+*.bag
+

@@ -1,0 +1,77 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="panda">
+
+  <xacro:arg name="arm_id" default="panda" />
+  <xacro:arg name="hand" default="true" />
+  <xacro:arg name="gazebo" default="true" />
+  <xacro:arg name="xyz" default="0 0 0" />
+  <xacro:arg name="rpy" default="0 0 0" />
+
+  <xacro:include filename="$(find franka_description)/robots/panda/panda.urdf.xacro"/>
+
+  <link name="wrist_camera_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.08 0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.1 0.1 0.1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.02 0.08 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+    </inertial>
+  </link>
+
+  <joint name="wrist_camera_joint" type="fixed">
+    <parent link="$(arg arm_id)_hand"/>
+    <child link="wrist_camera_link"/>
+    <origin xyz="0.04 0.0 0.03" rpy="3.1415926 -1.5707963 0"/>
+  </joint>
+
+  <link name="wrist_camera_optical_link" />
+  <joint name="wrist_camera_optical_joint" type="fixed">
+    <parent link="wrist_camera_link"/>
+    <child link="wrist_camera_optical_link"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <gazebo reference="wrist_camera_link">
+    <sensor type="depth" name="wrist_camera">
+      <update_rate>30.0</update_rate>
+      <camera>
+        <horizontal_fov>1.047198</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.02</near>
+          <far>3.0</far>
+        </clip>
+      </camera>
+      <plugin name="wrist_camera_controller" filename="libgazebo_ros_openni_kinect.so">
+        <baseline>0.2</baseline>
+        <alwaysOn>true</alwaysOn>
+        <updateRate>0.0</updateRate>
+        <cameraName>wrist_camera</cameraName>
+        <imageTopicName>/wrist_camera/color/image_raw</imageTopicName>
+        <cameraInfoTopicName>/wrist_camera/color/camera_info</cameraInfoTopicName>
+        <depthImageTopicName>/wrist_camera/depth/image_raw</depthImageTopicName>
+        <depthImageInfoTopicName>/wrist_camera/depth/camera_info</depthImageInfoTopicName>
+        <pointCloudTopicName>/wrist_camera/depth/points</pointCloudTopicName>
+        <frameName>wrist_camera_optical_link</frameName>
+        <pointCloudCutoff>0.02</pointCloudCutoff>
+        <pointCloudCutoffMax>3.0</pointCloudCutoffMax>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,30 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="link_attacher_helper">
+    <!-- 给个随便的小惯性/碰撞，不重要 -->
+    <link name="base_link">
+      <inertial>
+        <mass>0.001</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry>
+          <sphere><radius>0.001</radius></sphere>
+        </geometry>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <sphere><radius>0.001</radius></sphere>
+        </geometry>
+      </visual>
+    </link>
+
+    <!-- ★ 关键：在这个模型里挂 link_attacher 插件 ★ -->
+    <plugin name="link_attacher_node" filename="libgazebo_ros_link_attacher.so">
+      <!-- 插件本身不需要额外参数 -->
+    </plugin>
+  </model>
+</sdf>

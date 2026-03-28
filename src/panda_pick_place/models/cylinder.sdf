@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="cylinder">
+    <static>false</static>
+    <link name="link">
+      <inertial>
+        <mass>0.05</mass>
+        <inertia>
+          <!-- 实心圆柱惯量，m=0.05, r=0.025, h=0.05，大概值 -->
+          <ixx>1.8229e-05</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>1.8229e-05</iyy>
+          <iyz>0</iyz>
+          <izz>1.5625e-05</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="collision">
+        <geometry>
+          <cylinder>
+            <radius>0.025</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+
+        <!-- 添加软接触，让物体被夹住时更稳定、更像“形变” -->
+        <surface>
+          <contact>
+            <!-- CFM: compliance（顺应性），越大越软 -->
+            <ode>
+              <kd>1e1</kd>              <!-- 阻尼 -->
+              <kp>1e4</kp>              <!-- 接触弹性系数，越小越软，1e3–1e4合适 -->
+              <max_vel>0.01</max_vel>   <!-- 避免弹跳 -->
+              <min_depth>0.001</min_depth> <!-- 接触深度 -->
+            </ode>
+          </contact>
+
+          <friction>
+            <ode>
+              <mu>1.5</mu>        <!-- 摩擦系数，抓取更稳 -->
+              <mu2>1.5</mu2>
+            </ode>
+          </friction>
+
+          <bounce>
+            <restitution_coefficient>0.0</restitution_coefficient> <!-- 不反弹 -->
+            <threshold>1e-6</threshold>
+          </bounce>
+        </surface>
+      </collision>
+
+      <visual name="visual">
+        <geometry>
+          <cylinder>
+            <radius>0.025</radius>
+            <length>0.1</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>1 0 0 1</ambient>
+          <diffuse>1 0 0 1</diffuse>
+          <specular>0.1 0.1 0.1 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

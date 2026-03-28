@@ -1,0 +1,12 @@
+
+<launch>
+
+
+  <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
+          launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+          
+          <param name="model_type" value="vit_b" />
+  </node>
+
+
+</launch>

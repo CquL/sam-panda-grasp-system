@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 启动 panda_moveit_config 的 demo_gazebo.launch -->
+  <include file="$(find panda_moveit_config)/launch/demo_gazebo_supermarket.launch">
+    <arg name="paused" value="false"/>
+    <arg name="gazebo_gui" value="true"/>
+  </include>
+
+  <node pkg="tf" type="static_transform_publisher"
+      name="depth_camera_tf"
+      args="0.182005 -0.184616 0.448087 0 0 -1.57 world depth_camera_link 100" />
+
+
+  <!-- <node pkg="grasp_detector_ros" type="detector_node.py" name="grasp_detector_node" output="screen"
+          launch-prefix="/home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+    </node> -->
+
+  <!-- export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 -->
+  <!-- <node pkg="grasp_detector_ros" type="detector_node_open3d.py" name="grasp_detector_node" output="screen"
+          launch-prefix="/home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+    </node> -->
+  <!-- 等待Gazebo完全启动
+  <arg name="wait_time" default="5.0"/> -->
+
+  <!-- 在Gazebo中生成立方体物体 -->
+
+
+  <!-- 启动抓取放置节点（如果要自动跑的话，可以加上） -->
+  <!--
+  <node name="pick_place_node"
+        pkg="panda_pick_place" type="pick_place_node.py"
+        output="screen" />
+  -->
+
+</launch>
