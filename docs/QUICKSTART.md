@@ -9,18 +9,70 @@ This guide helps a new machine reach one of two goals:
 
 The first is much easier than the second.
 
-## 2. Required baseline environment
+## 2. Reference platform
 
-This repository assumes a Linux + ROS1 + catkin ecosystem. In practice, you should expect to prepare:
+The current exported repository is closest to this observed baseline:
 
-- ROS1 with Python 3
+| Item | Reference |
+| --- | --- |
+| OS | Ubuntu 20.04.6 LTS |
+| ROS | Noetic |
+| ROS-side Python | 3.8.10 |
+| ML-side Python | 3.9.25 |
+| GPU | NVIDIA GeForce RTX 5070 Laptop GPU |
+| Driver / CUDA | 570.169 / 12.8 |
+
+This is a **reference baseline**, not a guarantee that only this exact machine can run the project.
+
+## 3. Understand the two Python runtimes
+
+This project uses a split runtime:
+
+- **ROS / catkin side**
+  Usually system Python on Ubuntu 20.04 + ROS Noetic.
+- **ML / perception side**
+  A dedicated Python 3.9 environment for SAM, GraspNet, Open3D, and the OpenAI SDK.
+
+If you collapse everything into one interpreter without checking ABI compatibility, `cv_bridge`, `open3d`, and Torch-related imports are the first likely failure points.
+
+## 4. Recreate the ML environment
+
+If you use Conda, the closest starting point is:
+
+```bash
+conda env create -f environment/anygrasp_env.reference.yml
+conda activate anygrasp_env
+pip install -r requirements/anygrasp-reference.txt
+```
+
+Important notes:
+
+- Install **Torch separately** with a build that matches your local CUDA runtime.
+- Do **not** try to install `cv_bridge` from pip for this workflow; keep ROS Python bindings on the ROS side.
+- If you do not use Conda, mirror the versions from:
+  - `requirements/anygrasp-reference.txt`
+  - `docs/COMPATIBILITY.md`
+
+## 5. Prepare the ROS base system
+
+This repository assumes a Linux + ROS1 + catkin ecosystem. In practice, you should prepare:
+
+- ROS1 Noetic with Python 3
 - Gazebo
 - MoveIt
 - Franka-related ROS packages
 - OpenCV / `cv_bridge`
-- PyTorch environment compatible with your GPU and CUDA
+- ROS topic and transform tools such as `tf`
 
-## 3. Required files and variables
+If your ROS environment is already available, `rosdep` is a good first pass:
+
+```bash
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+You may still need extra Franka / Gazebo packages depending on your machine and overlay setup.
+
+## 6. Required files and variables
 
 ### Mandatory
 
@@ -45,7 +97,7 @@ export LIBFFI_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7
 export GRASPNET_ROOT=/absolute/path/to/graspnet-baseline
 ```
 
-## 4. Run the environment self-check
+## 7. Run the environment self-check
 
 ```bash
 bash scripts/check_export_env.sh
@@ -53,16 +105,17 @@ bash scripts/check_export_env.sh
 
 If the script reports failures, fix those first.
 
-## 5. Build workspace
+## 8. Build workspace
 
 From repository root:
 
 ```bash
+source /opt/ros/noetic/setup.bash
 catkin_make
 source devel/setup.bash
 ```
 
-## 6. Perception-only validation path
+## 9. Perception-only validation path
 
 Start SAM:
 
@@ -82,7 +135,7 @@ Optional VLM planner:
 roslaunch sam_perception llm.launch
 ```
 
-## 7. Full integrated path
+## 10. Full integrated path
 
 ```bash
 roslaunch sam_perception system_new.launch
@@ -95,7 +148,7 @@ This path additionally assumes:
 - Franka-related packages are available
 - scheduler and execution chain are compatible with your machine
 
-## 8. Known setup traps
+## 11. Known setup traps
 
 ### Trap 1: SAM starts but checkpoint is missing
 
@@ -119,16 +172,18 @@ Fix:
 - verify `third_party/graspnet-baseline/`
 - or set `GRASPNET_ROOT`
 
-### Trap 3: Gazebo world fails to load object assets
+### Trap 3: ROS / Gazebo / Franka packages are missing
 
 Symptom:
 
-- object meshes missing in supermarket scenes
+- launch files fail with package-not-found errors
+- `rospack find` cannot resolve `gazebo_ros`, `franka_description`, or related packages
 
 Fix:
 
-- vendor the missing models
-- or replace external references with repository-local `model://` assets
+- source your ROS installation before building or launching
+- run `rosdep install --from-paths src --ignore-src -r -y`
+- install the missing Franka / Gazebo / MoveIt packages into the target machine
 
 ### Trap 4: Python environment mismatch
 
@@ -141,7 +196,18 @@ Fix:
 - use a dedicated Python environment
 - point `ANYGRASP_PYTHON` to that interpreter
 
-## 9. Honest expectation management
+### Trap 5: The simulation runs but the exported cracker box looks simpler
+
+Symptom:
+
+- the supermarket scene loads, but the `Cracker_Box` object no longer uses the original textured mesh from the local machine.
+
+Fix / explanation:
+
+- this export intentionally replaced the machine-local mesh dependency with a self-contained primitive placeholder
+- portability improved, but the visual asset is no longer identical to the original local scene
+
+## 12. Honest expectation management
 
 If you are testing on a fresh machine, the likely path is:
 

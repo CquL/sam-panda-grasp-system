@@ -120,8 +120,13 @@ if command -v rospack >/dev/null 2>&1; then
 fi
 
 echo
-if grep -R "/home/lhj/.gazebo/models/Cracker_Box/textured.obj" "$ROOT_DIR/src/panda_pick_place/worlds" >/dev/null 2>&1; then
-  warn "World files still reference a machine-local Cracker_Box mesh. Portability is not yet complete."
+if grep -R -E "/home/[^/]+/" \
+  "$ROOT_DIR/src/sam_perception" \
+  "$ROOT_DIR/src/panda_moveit_config" \
+  "$ROOT_DIR/src/panda_pick_place" >/dev/null 2>&1; then
+  warn "Machine-local /home/<user> paths still exist under the core project packages. Search for /home/... and remove them before redistribution."
+else
+  pass "No machine-local /home/<user> paths found under the core project packages"
 fi
 
 echo

@@ -1,0 +1,49 @@
+<svg width="1280" height="340" viewBox="0 0 1280 340" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="compat-bg" x1="0" y1="0" x2="1280" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1220"/>
+      <stop offset="0.55" stop-color="#12304A"/>
+      <stop offset="1" stop-color="#0E3A2D"/>
+    </linearGradient>
+    <linearGradient id="compat-card" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFFFF" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="340" rx="28" fill="url(#compat-bg)"/>
+  <circle cx="118" cy="74" r="118" fill="#F97316" fill-opacity="0.10"/>
+  <circle cx="1116" cy="80" r="128" fill="#38BDF8" fill-opacity="0.10"/>
+  <circle cx="1030" cy="286" r="150" fill="#22C55E" fill-opacity="0.10"/>
+
+  <text x="56" y="62" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">
+    Reference Platform Snapshot
+  </text>
+  <text x="56" y="96" fill="#CBD5E1" font-family="Arial, sans-serif" font-size="18">
+    The current export is documented against a real observed baseline instead of a vague generic setup note.
+  </text>
+
+  <rect x="56" y="132" width="270" height="150" rx="20" fill="url(#compat-card)" stroke="#FFFFFF" stroke-opacity="0.16"/>
+  <text x="80" y="168" fill="#93C5FD" font-family="Arial, sans-serif" font-size="15">Host Base</text>
+  <text x="80" y="206" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">Ubuntu 20.04.6</text>
+  <text x="80" y="238" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="18">ROS Noetic</text>
+  <text x="80" y="266" fill="#94A3B8" font-family="Arial, sans-serif" font-size="16">Catkin workspace layout</text>
+
+  <rect x="356" y="132" width="270" height="150" rx="20" fill="url(#compat-card)" stroke="#FFFFFF" stroke-opacity="0.16"/>
+  <text x="380" y="168" fill="#86EFAC" font-family="Arial, sans-serif" font-size="15">ROS Runtime</text>
+  <text x="380" y="206" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">Python 3.8.10</text>
+  <text x="380" y="238" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="18">/usr/bin/python3</text>
+  <text x="380" y="266" fill="#94A3B8" font-family="Arial, sans-serif" font-size="16">Launch + cv_bridge side</text>
+
+  <rect x="656" y="132" width="270" height="150" rx="20" fill="url(#compat-card)" stroke="#FFFFFF" stroke-opacity="0.16"/>
+  <text x="680" y="168" fill="#FCD34D" font-family="Arial, sans-serif" font-size="15">ML Runtime</text>
+  <text x="680" y="206" fill="white" font-family="Arial, sans-serif" font-size="28" font-weight="700">Python 3.9.25</text>
+  <text x="680" y="238" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="18">Torch 2.8.0 + Open3D 0.19</text>
+  <text x="680" y="266" fill="#94A3B8" font-family="Arial, sans-serif" font-size="16">SAM + GraspNet side</text>
+
+  <rect x="956" y="132" width="268" height="150" rx="20" fill="url(#compat-card)" stroke="#FFFFFF" stroke-opacity="0.16"/>
+  <text x="980" y="168" fill="#F9A8D4" font-family="Arial, sans-serif" font-size="15">GPU Stack</text>
+  <text x="980" y="206" fill="white" font-family="Arial, sans-serif" font-size="24" font-weight="700">RTX 5070 Laptop</text>
+  <text x="980" y="238" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="18">Driver 570.169</text>
+  <text x="980" y="266" fill="#94A3B8" font-family="Arial, sans-serif" font-size="16">CUDA 12.8</text>
+</svg>

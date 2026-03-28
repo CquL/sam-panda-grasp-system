@@ -1,0 +1,73 @@
+name: Validate Repository
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Validate shell syntax
+        run: bash -n scripts/check_export_env.sh
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile \
+            src/sam_perception/scripts/check_cam.py \
+            src/sam_perception/scripts/check_models.py \
+            src/sam_perception/scripts/grasp_from_sam.py \
+            src/sam_perception/scripts/llm_planner.py \
+            src/sam_perception/scripts/sam_node.py \
+            src/sam_perception/scripts/wrist_vlm_node.py \
+            src/sam_perception/src/sam_perception/core_grasp.py \
+            src/sam_perception/src/sam_perception/core_llm.py \
+            src/sam_perception/src/sam_perception/core_sam.py \
+            src/panda_pick_place/scripts/control_panel.py \
+            src/panda_pick_place/scripts/demo.py \
+            src/panda_pick_place/scripts/gazebo_interface.py \
+            src/panda_pick_place/scripts/grasp_test.py \
+            src/panda_pick_place/scripts/gtsp_scheduler.py \
+            src/panda_pick_place/scripts/motion_controller.py \
+            src/panda_pick_place/scripts/moveit_learn.py \
+            src/panda_pick_place/scripts/new.py
+
+      - name: Validate required repository files
+        run: |
+          test -f README.md
+          test -f CONTRIBUTING.md
+          test -f .env.example
+          test -f docs/ARCHITECTURE.md
+          test -f docs/COMPATIBILITY.md
+          test -f docs/PORTABILITY_AUDIT.md
+          test -f docs/QUICKSTART.md
+          test -f docs/THIRD_PARTY.md
+          test -f docs/assets/hero.svg
+          test -f docs/assets/readiness.svg
+          test -f docs/assets/system-panels.svg
+          test -f docs/assets/compatibility.svg
+          test -f environment/README.md
+          test -f environment/anygrasp_env.reference.yml
+          test -f requirements/anygrasp-reference.txt
+
+      - name: Check for machine-local absolute paths under src
+        run: |
+          if grep -R -nE '/home/[^/]+/' \
+            src/sam_perception \
+            src/panda_moveit_config \
+            src/panda_pick_place; then
+            echo 'Unexpected machine-local path found under src/'
+            exit 1
+          fi

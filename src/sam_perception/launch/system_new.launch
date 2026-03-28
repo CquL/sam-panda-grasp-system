@@ -42,7 +42,7 @@
 
 
   <!-- <node pkg="panda_pick_place" type="control_panel.py" name="demo_control_panel" output="screen"
-        launch-prefix="/usr/bin/python3">
+        launch-prefix="$(arg ros_python)">
   </node> -->
 
   <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"

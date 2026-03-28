@@ -493,19 +493,23 @@
           <pose>0 0 0 0 -0 0</pose>
         </inertial>
         <visual name='visual'>
+          <!-- Replaced machine-local Cracker_Box mesh with a self-contained placeholder box for export portability. -->
           <geometry>
-            <mesh>
-              <uri>/home/lhj/.gazebo/models/Cracker_Box/textured.obj</uri>
-              <scale>0.7 0.5 0.5</scale>
-            </mesh>
+            <box>
+              <size>0.158 0.06 0.21</size>
+            </box>
           </geometry>
+          <material>
+            <ambient>0.75 0.28 0.10 1</ambient>
+            <diffuse>0.90 0.36 0.14 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
         </visual>
         <collision name='collision'>
           <geometry>
-            <mesh>
-              <uri>/home/lhj/.gazebo/models/Cracker_Box/textured.obj</uri>
-              <scale>0.7 0.5 0.5</scale>
-            </mesh>
+            <box>
+              <size>0.158 0.06 0.21</size>
+            </box>
           </geometry>
           <surface>
             <friction>

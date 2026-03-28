@@ -1,0 +1,13 @@
+# Reference pip packages observed in the original anygrasp_env.
+# This is a reference baseline, not a fully locked environment.
+# Install torch separately so it matches the target machine's CUDA runtime.
+
+numpy==1.23.4
+open3d==0.19.0
+opencv-python==4.11.0.86
+openai==2.26.0
+segment-anything==1.0
+scipy
+Pillow
+tqdm
+scikit-learn

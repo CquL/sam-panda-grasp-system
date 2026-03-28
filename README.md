@@ -3,8 +3,11 @@
 </p>
 
 <p align="center">
+  <img alt="Repo Validation" src="https://img.shields.io/github/actions/workflow/status/CquL/sam-panda-grasp-system/validate.yml?branch=main&style=for-the-badge&label=Repo%20Validation" />
+  <img alt="Ubuntu 20.04" src="https://img.shields.io/badge/Ubuntu-20.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" />
   <img alt="ROS 1" src="https://img.shields.io/badge/ROS-1%20Catkin-22314E?style=for-the-badge&logo=ros" />
-  <img alt="Python 3" src="https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img alt="ROS Noetic" src="https://img.shields.io/badge/ROS-Noetic-22314E?style=for-the-badge" />
+  <img alt="Python 3.8 and 3.9" src="https://img.shields.io/badge/Python-3.8%20%2F%203.9-3776AB?style=for-the-badge&logo=python&logoColor=white" />
   <img alt="MoveIt" src="https://img.shields.io/badge/MoveIt-Integrated-0B6E4F?style=for-the-badge" />
   <img alt="Gazebo" src="https://img.shields.io/badge/Gazebo-Simulation-5C3EE8?style=for-the-badge" />
   <img alt="SAM" src="https://img.shields.io/badge/SAM-Segmentation-D94841?style=for-the-badge" />
@@ -35,11 +38,15 @@
 >
 > 1. 目标机器需要提前具备 ROS / Gazebo / MoveIt / Franka 生态依赖。
 > 2. `sam_vit_b_01ec64.pth` 没有随仓库提供，需要用户自行放置。
-> 3. 部分 Gazebo 世界依赖本机外部模型资源，尤其是 `Cracker_Box`。
-> 4. 当前没有 CI，也没有在干净机器上做过一次完整自动化验收。
+> 3. 仓库现在已经补上参考环境、兼容性矩阵和轻量 CI，但还没有做到 Docker / 一键安装。
+> 4. 还没有一份“干净机器从 `clone` 到 `roslaunch` 全链路成功”的正式验收记录。
 
 <p align="center">
   <img src="docs/assets/readiness.svg" alt="Project Readiness Snapshot" width="100%" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/compatibility.svg" alt="Reference Platform Snapshot" width="100%" />
 </p>
 
 ## 目录
@@ -48,6 +55,7 @@
 - [项目亮点](#项目亮点)
 - [系统总览](#系统总览)
 - [仓库结构](#仓库结构)
+- [参考平台](#参考平台)
 - [当前可移植性结论](#当前可移植性结论)
 - [快速开始](#快速开始)
 - [文档导航](#文档导航)
@@ -144,12 +152,34 @@ sam-panda-grasp-system/
 │   └── graspnet-baseline/
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── COMPATIBILITY.md
 │   ├── PORTABILITY_AUDIT.md
 │   ├── QUICKSTART.md
 │   └── assets/
+├── environment/
+│   ├── README.md
+│   └── anygrasp_env.reference.yml
+├── requirements/
+│   └── anygrasp-reference.txt
 └── scripts/
     └── check_export_env.sh
 ```
+
+## 参考平台
+
+这个仓库现在带有一套**真实提取自原始工作环境**的参考基线，用来帮助别人理解“至少什么组合更接近可运行状态”。
+
+| Layer | Reference Baseline |
+| --- | --- |
+| Host OS | Ubuntu 20.04.6 LTS |
+| ROS Distro | Noetic |
+| ROS Runtime Python | `/usr/bin/python3` = Python 3.8.10 |
+| ML Runtime Python | `anygrasp_env` = Python 3.9.25 |
+| GPU | NVIDIA GeForce RTX 5070 Laptop GPU |
+| Driver / CUDA | 570.169 / CUDA 12.8 |
+| Key ML Packages | `torch 2.8.0+cu128`, `open3d 0.19.0`, `opencv-python 4.11.0.86`, `openai 2.26.0`, `segment-anything 1.0` |
+
+这不是一个“严格锁死的唯一组合”，但它比抽象地写“需要 Python 3”更接近真实可复现路径。详细说明请看 [COMPATIBILITY.md](docs/COMPATIBILITY.md) 和 [environment/README.md](environment/README.md)。
 
 ## 当前可移植性结论
 
@@ -164,16 +194,18 @@ sam-panda-grasp-system/
 - `GraspNet` 路径支持仓库内相对路径，也支持外部覆盖。
 - 多个核心 launch 中的本机 Python 绝对路径已经改为环境变量覆盖。
 - 缺失的相关 ROS 包已经补入当前导出仓库。
+- 参考环境文件、兼容性矩阵、贡献说明和轻量 CI 已加入仓库。
+- `supermarket.world` 已移除机器本地 `Cracker_Box` 网格依赖，导出版本改为自包含占位几何体。
 
 ### 仍然阻塞“别的电脑一下载就跑”的问题
 
 | Issue | Impact | Severity |
 | --- | --- | --- |
 | SAM 权重未随仓库提供 | 感知节点无法直接启动 | Blocking |
-| 外部 Gazebo 模型资源不完整 | 某些世界文件无法完整渲染或仿真 | Blocking |
 | ROS / Gazebo / MoveIt / Franka 依赖未一键安装 | 新机器仍需人工准备基础环境 | Blocking |
-| 没有干净机器上的自动验收记录 | 无法证明仓库即开即用 | High |
-| 若 Python/ROS 版本不匹配，`cv_bridge`、`open3d`、`segment_anything` 可能失配 | 运行期崩溃风险 | High |
+| Torch / CUDA / Open3D / `cv_bridge` 的双解释器组合未完全锁定 | 运行期导入或 ABI 失配风险 | High |
+| 没有干净机器上的端到端验收记录 | 无法诚实证明仓库即开即用 | High |
+| 当前 `Cracker_Box` 采用占位几何体而非原始贴图模型 | 仿真视觉 fidelity 与原始本机场景不完全一致 | Medium |
 
 更详细的角色化评审请看 [PORTABILITY_AUDIT.md](docs/PORTABILITY_AUDIT.md)。
 
@@ -203,6 +235,12 @@ export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
 export LIBFFI_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7
 ```
 
+如果你想尽量贴近原始工作环境，先看：
+
+- [environment/README.md](environment/README.md)
+- [environment/anygrasp_env.reference.yml](environment/anygrasp_env.reference.yml)
+- [requirements/anygrasp-reference.txt](requirements/anygrasp-reference.txt)
+
 ### 3. 构建工作区
 
 ```bash
@@ -228,17 +266,20 @@ roslaunch sam_perception system_new.launch
 ## 文档导航
 
 - [系统架构详解](docs/ARCHITECTURE.md)
+- [兼容性矩阵与参考平台](docs/COMPATIBILITY.md)
 - [跨机器可移植性审查](docs/PORTABILITY_AUDIT.md)
 - [快速开始与环境准备](docs/QUICKSTART.md)
+- [参考环境重建说明](environment/README.md)
 - [第三方组件与来源说明](docs/THIRD_PARTY.md)
+- [贡献与改动建议](CONTRIBUTING.md)
 
 ## 项目现状与下一步
 
 如果要把这个仓库提升到真正“顶级项目”的交付标准，推荐优先做下面四件事：
 
-1. 提供一套可直接复现的环境定义，例如 `environment.yml`、Docker、或 Dev Container。
-2. 补齐缺失模型资源与世界文件依赖，去掉剩余外部资源耦合。
-3. 在干净机器上跑一次从 `clone` 到 `roslaunch` 的完整安装流程，并固化为 CI / 验收脚本。
+1. 提供 Docker / Dev Container / `rosdep` 自动化，减少人工安装 ROS 生态依赖。
+2. 补齐 SAM 权重获取流程，并给出更明确的模型文件管理策略。
+3. 在干净机器上跑一次从 `clone` 到 `roslaunch` 的完整验收，并把结果固化成 smoke test。
 4. 明确所有子包的许可证与来源，补齐 `LICENSE`、`NOTICE` 和依赖清单。
 
 ---

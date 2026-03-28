@@ -9,6 +9,7 @@ log/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 *.swp
 .DS_Store
 .env
@@ -20,4 +21,3 @@ src/sam_perception/models/*.ckpt
 
 # ROS runtime artifacts
 *.bag
-

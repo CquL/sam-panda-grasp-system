@@ -40,12 +40,14 @@
 - Status:
   未随仓库直接提供，因为文件超过 GitHub 常规单文件限制。
 
-### Gazebo Model Assets
+### Gazebo Scene Assets
 
-- Example:
-  `Cracker_Box` 在某些世界文件中仍引用机器本地路径。
-- Status:
-  这部分仍然是当前跨机器可移植性的主要阻塞项之一。
+- Previous problem:
+  原始世界文件中的 `Cracker_Box` 使用了机器本地 OBJ 路径。
+- Current export behavior:
+  导出仓库已经把这部分替换成**仓库自包含的占位几何体**，避免了本地路径依赖。
+- Remaining gap:
+  如果你需要恢复原始带贴图的视觉效果，仍需要后续补充一个正式的 repo-local 模型资源。
 
 ## Ownership Interpretation
 

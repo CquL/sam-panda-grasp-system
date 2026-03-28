@@ -1,0 +1,18 @@
+name: anygrasp_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - numpy=1.23.4
+  - scipy
+  - pillow
+  - tqdm
+  - scikit-learn
+  - open3d=0.19.0
+  - pip:
+      - opencv-python==4.11.0.86
+      - openai==2.26.0
+      - segment-anything==1.0
+# Install torch separately so the wheel can be matched to the target machine's CUDA runtime.
