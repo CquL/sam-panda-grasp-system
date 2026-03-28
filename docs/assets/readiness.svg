@@ -1,0 +1,29 @@
+<svg width="1280" height="320" viewBox="0 0 1280 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="320" rx="28" fill="#0F172A"/>
+  <text x="56" y="64" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">
+    Project Readiness Snapshot
+  </text>
+  <text x="56" y="98" fill="#CBD5E1" font-family="Arial, sans-serif" font-size="18">
+    Honest status: strong documentation and structure, partial portability, incomplete one-click reproducibility.
+  </text>
+
+  <text x="56" y="150" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="20">Documentation</text>
+  <rect x="240" y="132" width="900" height="24" rx="12" fill="#1E293B"/>
+  <rect x="240" y="132" width="760" height="24" rx="12" fill="#22C55E"/>
+  <text x="1160" y="150" fill="#86EFAC" font-family="Arial, sans-serif" font-size="18" text-anchor="end">Strong</text>
+
+  <text x="56" y="195" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="20">Repository Structure</text>
+  <rect x="240" y="177" width="900" height="24" rx="12" fill="#1E293B"/>
+  <rect x="240" y="177" width="810" height="24" rx="12" fill="#38BDF8"/>
+  <text x="1160" y="195" fill="#7DD3FC" font-family="Arial, sans-serif" font-size="18" text-anchor="end">Strong</text>
+
+  <text x="56" y="240" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="20">Cross-Machine Portability</text>
+  <rect x="240" y="222" width="900" height="24" rx="12" fill="#1E293B"/>
+  <rect x="240" y="222" width="470" height="24" rx="12" fill="#F59E0B"/>
+  <text x="1160" y="240" fill="#FCD34D" font-family="Arial, sans-serif" font-size="18" text-anchor="end">Partial</text>
+
+  <text x="56" y="285" fill="#E2E8F0" font-family="Arial, sans-serif" font-size="20">Plug-and-Play Reproducibility</text>
+  <rect x="240" y="267" width="900" height="24" rx="12" fill="#1E293B"/>
+  <rect x="240" y="267" width="260" height="24" rx="12" fill="#EF4444"/>
+  <text x="1160" y="285" fill="#FCA5A5" font-family="Arial, sans-serif" font-size="18" text-anchor="end">Not Yet</text>
+</svg>
