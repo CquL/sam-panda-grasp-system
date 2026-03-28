@@ -1,4 +1,6 @@
 <launch>
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
+  <arg name="ros_python" default="$(optenv ROS_PYTHON_EXEC /usr/bin/python3)" />
     <!-- 常用候选:
        panda_manipulator[RRTConnect]
        panda_manipulator[RRT]
@@ -21,20 +23,20 @@
   </node>
 
   <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="$(arg anygrasp_python)">
     <param name="model_type" value="vit_b" />
     <param name="approach_offset" value="0.02" />
   </node>
 
   <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="$(arg anygrasp_python)">
     <param name="model_type" value="vit_b" />
     <param name="debug_o3d" value="true" />
   </node>
 
 
   <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
-        launch-prefix="/usr/bin/python3">
+        launch-prefix="$(arg ros_python)">
         <param name="planner_id" value="$(arg planner_id)" />
   </node>
 
@@ -44,11 +46,11 @@
   </node> -->
 
   <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
-        launch-prefix="/usr/bin/python3">
+        launch-prefix="$(arg ros_python)">
   </node>
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="$(arg anygrasp_python)">
   </node>
 
 </launch>

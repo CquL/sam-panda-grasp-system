@@ -7,7 +7,9 @@ import os
 # ==============================================================================
 # 【核心修复 1】防止 ROS 系统路径干扰 Conda 环境
 # ==============================================================================
-os.environ['LD_PRELOAD'] = '/usr/lib/x86_64-linux-gnu/libffi.so.7'
+libffi_preload = os.environ.get("LIBFFI_PRELOAD")
+if libffi_preload:
+    os.environ['LD_PRELOAD'] = libffi_preload
 sys.path = [p for p in sys.path if '/usr/lib/python3/dist-packages' not in p]
 
 import rospy
