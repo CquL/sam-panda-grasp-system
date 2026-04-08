@@ -218,6 +218,29 @@ sam-panda-grasp-system/
 ```bash
 cd /path/to/sam-panda-grasp-system
 bash scripts/check_export_env.sh
+export DASHSCOPE_API_KEY=your_key
+```
+
+### 参考启动方式
+
+推荐将系统分为两部分启动：
+
+1. 启动 Gazebo / MoveIt / SAM / GraspNet 感知链：
+
+```bash
+roslaunch sam_perception system_new.launch launch_demo:=false
+```
+
+2. 启动执行 / 调度 / 手腕 VLM：
+
+```bash
+roslaunch sam_perception demo_only.launch
+```
+
+如果希望一次性启动完整系统，也可以直接：
+
+```bash
+roslaunch sam_perception system_new.launch launch_demo:=true
 ```
 
 ### 2. 准备关键环境变量

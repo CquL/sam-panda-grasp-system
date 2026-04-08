@@ -3,9 +3,7 @@
 
 import os
 import sys
-libffi_preload = os.environ.get("LIBFFI_PRELOAD")
-if libffi_preload:
-    os.environ['LD_PRELOAD'] = libffi_preload
+os.environ['LD_PRELOAD'] = '/usr/lib/x86_64-linux-gnu/libffi.so.7'
 sys.path = [p for p in sys.path if '/usr/lib/python3/dist-packages' not in p]
 
 import rospy
@@ -18,7 +16,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String, Float32MultiArray
 from cv_bridge import CvBridge
 
-DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+MY_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
 class WristVLMNode:
     def __init__(self):
@@ -33,10 +31,9 @@ class WristVLMNode:
                 del os.environ[var]
 
         # 屏蔽完代理后，再初始化 client
-        if not DASHSCOPE_API_KEY:
-            raise RuntimeError("请先设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
-
-        self.client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.client = OpenAI(api_key=MY_API_KEY, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
+        if not MY_API_KEY:
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 功能将不可用。")
         
         # 订阅手腕相机画面
         rospy.Subscriber('/wrist_camera/color/image_raw', Image, self.image_cb, queue_size=1)

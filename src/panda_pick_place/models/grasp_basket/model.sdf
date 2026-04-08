@@ -1,0 +1,210 @@
+<?xml version='1.0'?>
+<sdf version='1.6'>
+  <model name='grasp_basket'>
+    <static>true</static>
+    <allow_auto_disable>false</allow_auto_disable>
+
+    <link name='basket_link'>
+      <self_collide>false</self_collide>
+      <kinematic>false</kinematic>
+      <gravity>true</gravity>
+
+      <!-- Bottom plate -->
+      <collision name='base_collision'>
+        <pose>0 0 0.005 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.26 0.01</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>100</mu2>
+              <slip1>0</slip1>
+              <slip2>0</slip2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>2e6</kp>
+              <kd>5</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name='base_visual'>
+        <pose>0 0 0.005 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.26 0.01</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.35 0.15 1</ambient>
+          <diffuse>0.20 0.55 0.20 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+
+      <!-- Front wall -->
+      <collision name='front_wall_collision'>
+        <pose>0 0.125 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.01 0.16</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>100</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>2e6</kp>
+              <kd>5</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name='front_wall_visual'>
+        <pose>0 0.125 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.01 0.16</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.35 0.15 1</ambient>
+          <diffuse>0.20 0.55 0.20 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+
+      <!-- Back wall -->
+      <collision name='back_wall_collision'>
+        <pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.01 0.16</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>100</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>2e6</kp>
+              <kd>5</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name='back_wall_visual'>
+        <pose>0 -0.125 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 0.01 0.16</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.35 0.15 1</ambient>
+          <diffuse>0.20 0.55 0.20 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+
+      <!-- Left wall -->
+      <collision name='left_wall_collision'>
+        <pose>0.175 0 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.01 0.26 0.16</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>100</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>2e6</kp>
+              <kd>5</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name='left_wall_visual'>
+        <pose>0.175 0 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.01 0.26 0.16</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.35 0.15 1</ambient>
+          <diffuse>0.20 0.55 0.20 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+
+      <!-- Right wall -->
+      <collision name='right_wall_collision'>
+        <pose>-0.175 0 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.01 0.26 0.16</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>100</mu>
+              <mu2>100</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>2e6</kp>
+              <kd>5</kd>
+              <min_depth>0.001</min_depth>
+              <max_vel>0.05</max_vel>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name='right_wall_visual'>
+        <pose>-0.175 0 0.085 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.01 0.26 0.16</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.35 0.15 1</ambient>
+          <diffuse>0.20 0.55 0.20 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

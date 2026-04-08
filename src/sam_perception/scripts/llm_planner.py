@@ -7,9 +7,7 @@ import os
 # ==============================================================================
 # 【核心修复 1】防止 ROS 系统路径干扰 Conda 环境
 # ==============================================================================
-libffi_preload = os.environ.get("LIBFFI_PRELOAD")
-if libffi_preload:
-    os.environ['LD_PRELOAD'] = libffi_preload
+os.environ['LD_PRELOAD'] = '/usr/lib/x86_64-linux-gnu/libffi.so.7'
 sys.path = [p for p in sys.path if '/usr/lib/python3/dist-packages' not in p]
 
 import rospy
@@ -23,7 +21,10 @@ import re
 import base64
 import ast  # 💥 新增：用于安全解析 Python 的二维列表字符串
 
-DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+# ==========================================
+# 🔑 从环境变量读取通义千问 / OpenAI 兼容 API Key
+# ==========================================
+MY_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
 class QwenPlannerNode:
     def __init__(self):
@@ -37,13 +38,12 @@ class QwenPlannerNode:
             if var in os.environ:
                 del os.environ[var]
 
-        if not DASHSCOPE_API_KEY:
-            raise RuntimeError("请先设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
-
         self.client = OpenAI(
-            api_key=DASHSCOPE_API_KEY,
+            api_key=MY_API_KEY,
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
+        if not MY_API_KEY:
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，LLM 规划功能将不可用。")
         
         rospy.Subscriber('/camera/color/image_raw', Image, self.image_cb)
         self.pub_bbox = rospy.Publisher('/sam/prompt_bbox', Float32MultiArray, queue_size=10)

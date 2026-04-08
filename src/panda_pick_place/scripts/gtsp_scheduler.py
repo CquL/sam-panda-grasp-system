@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import json
+import time
 import rospy
 import numpy as np
 from geometry_msgs.msg import PoseArray, PoseStamped, Pose
@@ -46,6 +48,7 @@ class GTSPScheduler:
         self.is_executing = False
         self.raw_poses = None
         self.raw_infos = None
+        self.current_run_metrics = None
 
         # 3. 订阅 GraspNet 的“原始”姿态数据
         rospy.Subscriber('/graspnet/grasp_pose_array_raw', PoseArray, self.pose_cb)
@@ -57,7 +60,9 @@ class GTSPScheduler:
         # 5. 把优选后的单体任务发布给执行器
         self.pub_pose = rospy.Publisher('/graspnet/grasp_pose_array', PoseArray, queue_size=1)
         self.pub_info = rospy.Publisher('/graspnet/grasp_info', Float32MultiArray, queue_size=1)
-        
+        self.pub_demo_cmd = rospy.Publisher('/demo/command', String, queue_size=1)
+        self.pub_schedule_metrics = rospy.Publisher('/scheduler/run_metrics', String, queue_size=10)
+
         rospy.loginfo("🚀 多目标 GTSP 任务调度中枢已全面启动并待命！")
 
 # ==========================================
@@ -75,6 +80,13 @@ class GTSPScheduler:
         
     def status_cb(self, msg):
         status = msg.data
+        if self.current_run_metrics is not None:
+            if status == "DONE":
+                self.current_run_metrics["done_count"] += 1
+            elif status == "FAILED":
+                self.current_run_metrics["failed_count"] += 1
+            elif status == "FAILED_BY_USER":
+                self.current_run_metrics["failed_by_user_count"] += 1
         if status in ["DONE", "FAILED", "FAILED_BY_USER"]:
             rospy.loginfo(f"📥 收到执行器反馈: {status}，准备派发下一个任务。")
             self.dispatch_next_task()
@@ -96,36 +108,42 @@ class GTSPScheduler:
 
     def process_and_schedule(self):
         if not self.raw_poses or not self.raw_infos: return
+        schedule_start_wall = time.time()
         rospy.loginfo("="*50)
         rospy.loginfo("🧠 [阶段 1] 开始多目标 GTSP 调度规划...")
         
-        # ---------------------------------------------------------
-        # 聚类模块: 使用 DBSCAN 区分不同的物体簇
-        # ---------------------------------------------------------
-        positions = [[p.position.x, p.position.y, p.position.z] for p in self.raw_poses.poses]
-        X = np.array(positions)
-        # =======================================================
-        # 💥 工业级“空间拉伸”黑科技：防止跨层货架误连
-        # =======================================================
-        X_scaled = np.copy(X)
-        # 将所有抓取点的 Z 轴坐标放大 3 倍（XY 保持不变）
-        # 这样物理上相差 5cm 的跨层间隙，在算法眼里就变成了 15cm 的鸿沟！
-        X_scaled[:, 2] *= 3.0 
-        
-        # 此时 eps 可以适当调大一点（比如 0.08 或 0.1），保证大型物体内部不断裂
-        clustering = DBSCAN(eps=0.08, min_samples=2).fit(X_scaled)
-        # =======================================================
-        # 空间距离超过 10cm (eps=0.1) 认为是不同物体
-        # clustering = DBSCAN(eps=0.08, min_samples=2).fit(X)
-        labels = clustering.labels_
-        unique_labels = set(labels) - {-1} # 剔除离群噪点
+        num_poses = len(self.raw_poses.poses)
+        info_stride = int(len(self.raw_infos) / num_poses) if num_poses > 0 and len(self.raw_infos) % num_poses == 0 else 0
+        use_object_ids = info_stride >= 4
+
+        if use_object_ids:
+            labels = np.array([int(self.raw_infos[i * info_stride]) for i in range(num_poses)], dtype=np.int32)
+            unique_labels = sorted(set(labels.tolist()))
+            rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇（直接使用 object_id 分组）。")
+        else:
+            # ---------------------------------------------------------
+            # 聚类模块: 使用 DBSCAN 区分不同的物体簇
+            # ---------------------------------------------------------
+            positions = [[p.position.x, p.position.y, p.position.z] for p in self.raw_poses.poses]
+            X = np.array(positions)
+            # =======================================================
+            # 💥 工业级“空间拉伸”黑科技：防止跨层货架误连
+            # =======================================================
+            X_scaled = np.copy(X)
+            # 将所有抓取点的 Z 轴坐标放大 3 倍（XY 保持不变）
+            # 这样物理上相差 5cm 的跨层间隙，在算法眼里就变成了 15cm 的鸿沟！
+            X_scaled[:, 2] *= 3.0 
             
-        if len(unique_labels) == 0:
-            rospy.logwarn("未能形成有效的目标簇！")
-            self.raw_poses = None; self.raw_infos = None
-            return
-            
-        rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇。")
+            clustering = DBSCAN(eps=0.08, min_samples=2).fit(X_scaled)
+            labels = clustering.labels_
+            unique_labels = set(labels) - {-1} # 剔除离群噪点
+                
+            if len(unique_labels) == 0:
+                rospy.logwarn("未能形成有效的目标簇！")
+                self.raw_poses = None; self.raw_infos = None
+                return
+                
+            rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇。")
         # =========================================================
         # 💥 新增：使用 Open3D 3D球体可视化聚类结果
         # =========================================================
@@ -161,9 +179,13 @@ class GTSPScheduler:
         # ---------------------------------------------------------
         clusters_data = {cid: [] for cid in unique_labels}
         for i, label in enumerate(labels):
-            if label == -1: continue
+            if not use_object_ids and label == -1:
+                continue
             pose = self.raw_poses.poses[i]
-            info = self.raw_infos[i*3 : i*3+3]
+            if use_object_ids:
+                info = self.raw_infos[i * info_stride + 1 : i * info_stride + 4]
+            else:
+                info = self.raw_infos[i*3 : i*3+3]
             
             q = self.get_ik(pose)
             if q is not None:
@@ -183,12 +205,28 @@ class GTSPScheduler:
         rospy.loginfo("🧬 正在运行遗传算法 (Genetic Algorithm) 优化抓取序列...")
         
         best_sequence = self.run_genetic_algorithm(valid_clusters, current_joints)
+        total_joint_cost = self.calc_sequence_cost(best_sequence, valid_clusters, current_joints)
+        scheduler_time_sec = time.time() - schedule_start_wall
         
         # 将最优序列转化为任务队列
         self.task_queue = []
         for cid, pose_idx in best_sequence:
-            pose, info, _ = valid_clusters[cid][pose_idx]
-            self.task_queue.append((pose, info))
+            pose, info, q = valid_clusters[cid][pose_idx]
+            self.task_queue.append((pose, info, q))
+
+        metrics = {
+            "task_count": len(self.task_queue),
+            "cluster_count": len(valid_clusters),
+            "candidate_pose_count": len(self.raw_poses.poses),
+            "joint_cost_rad": float(total_joint_cost),
+            "scheduler_time_sec": float(scheduler_time_sec),
+            "run_start_sim_time": rospy.Time.now().to_sec(),
+            "done_count": 0,
+            "failed_count": 0,
+            "failed_by_user_count": 0,
+        }
+        self.current_run_metrics = metrics
+        self.pub_schedule_metrics.publish(String(data=json.dumps(metrics)))
             
         rospy.loginfo(f"🏆 最优序列已生成 (共 {len(self.task_queue)} 步)。准备分发指令！")
         self.is_executing = True
@@ -271,12 +309,21 @@ class GTSPScheduler:
         rospy.loginfo(f"📉 算法收敛！最小总关节代价: {np.min(final_costs):.4f} rad")
         return [(cid, best_chrom[1][cid]) for cid in best_chrom[0]]
 
+    def calc_sequence_cost(self, best_sequence, clusters, start_joints):
+        total_cost = 0.0
+        curr_q = start_joints
+        for cid, pose_idx in best_sequence:
+            target_q = clusters[cid][pose_idx][2]
+            total_cost += float(np.max(np.abs(np.array(target_q) - np.array(curr_q))))
+            curr_q = target_q
+        return total_cost
+
     def dispatch_next_task(self):
         """派发任务给 demo.py 机械臂执行器"""
         if len(self.task_queue) > 0:
             rospy.loginfo(f"📦 正在下发队列中的下一个目标... (剩余 {len(self.task_queue)-1} 个)")
-            pose, info = self.task_queue.pop(0)
-            
+            pose, info, q = self.task_queue.pop(0)
+
             # 把这一个被 GA 选中的“天命姿态”包装成数组下发
             pa = PoseArray()
             # 💥 修复 2：使用存下来的 saved_header
@@ -284,11 +331,24 @@ class GTSPScheduler:
             pa.poses.append(pose)
             self.pub_pose.publish(pa)
             
-            info_msg = Float32MultiArray(data=info)
+            # info(3个: width/score/depth) + q(7个关节角) 一起下发
+            info_msg = Float32MultiArray(data=list(info) + list(q))
             self.pub_info.publish(info_msg)
         else:
+            if self.current_run_metrics is not None:
+                total_time = rospy.Time.now().to_sec() - self.current_run_metrics["run_start_sim_time"]
+                rospy.loginfo(
+                    f"📊 本轮任务统计: joint_cost={self.current_run_metrics['joint_cost_rad']:.4f} rad, "
+                    f"scheduler_time={self.current_run_metrics['scheduler_time_sec']:.4f} s, "
+                    f"total_time={total_time:.3f} s, "
+                    f"done={self.current_run_metrics['done_count']}, "
+                    f"failed={self.current_run_metrics['failed_count']}, "
+                    f"failed_by_user={self.current_run_metrics['failed_by_user_count']}"
+                )
             rospy.loginfo("🎉 所有多目标拣选任务已全部完成！调度中枢进入空闲等待。")
             self.is_executing = False
+            self.current_run_metrics = None
+            self.pub_demo_cmd.publish("all_done")
 
 if __name__ == '__main__':
     try:

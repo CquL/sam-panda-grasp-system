@@ -1,0 +1,16 @@
+<launch>
+  <arg name="scene_label" default="unknown" />
+  <arg name="notes" default="" />
+  <arg name="psr_threshold" default="0.95" />
+  <arg name="finalize_delay" default="0.2" />
+  <arg name="output_file" default="$(env HOME)/grasp_robot_ws/experiment_results/end_to_end_metrics.csv" />
+
+  <node pkg="sam_perception" type="experiment_logger.py" name="experiment_logger" output="screen"
+        launch-prefix="/usr/bin/python3">
+    <param name="scene_label" value="$(arg scene_label)" />
+    <param name="notes" value="$(arg notes)" />
+    <param name="psr_threshold" value="$(arg psr_threshold)" />
+    <param name="finalize_delay" value="$(arg finalize_delay)" />
+    <param name="output_file" value="$(arg output_file)" />
+  </node>
+</launch>

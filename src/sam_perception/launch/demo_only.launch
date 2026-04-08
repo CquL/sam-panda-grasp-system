@@ -1,0 +1,44 @@
+<launch>
+  <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
+  <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
+  <arg name="save_task_keyframes" default="false" />
+  <arg name="visualize_grasp_o3d" default="false" />
+  <arg name="pre_grasp_back_distance" default="0.12" />
+  <arg name="wrist_observation_backoff" default="0.04" />
+  <arg name="wrist_depth_band" default="0.05" />
+  <arg name="wrist_front_depth_percentile" default="20.0" />
+  <arg name="insert_extra_depth_min" default="0.01" />
+  <arg name="insert_depth_margin" default="0.01" />
+  <arg name="insert_extra_depth_max" default="0.09" />
+    <!-- 常用候选:
+       panda_manipulator[RRTConnect]
+       panda_manipulator[RRT]
+       panda_manipulator[RRTstar]
+       panda_manipulator[PRMstar]
+       panda_manipulator[BITstar]
+       panda_manipulator[ABITstar]
+    -->
+  <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
+        launch-prefix="/usr/bin/python3">
+    <param name="planner_id" value="$(arg planner_id)" />
+    <param name="figure_output_dir" value="$(arg figure_output_dir)" />
+    <param name="save_task_keyframes" value="$(arg save_task_keyframes)" />
+    <param name="pre_grasp_back_distance" value="$(arg pre_grasp_back_distance)" />
+    <param name="wrist_observation_backoff" value="$(arg wrist_observation_backoff)" />
+    <param name="wrist_depth_band" value="$(arg wrist_depth_band)" />
+    <param name="wrist_front_depth_percentile" value="$(arg wrist_front_depth_percentile)" />
+    <param name="insert_extra_depth_min" value="$(arg insert_extra_depth_min)" />
+    <param name="insert_depth_margin" value="$(arg insert_depth_margin)" />
+    <param name="insert_extra_depth_max" value="$(arg insert_extra_depth_max)" />
+  </node>
+
+  <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
+        launch-prefix="/usr/bin/python3">
+  </node>
+
+  <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+
+
+</launch>

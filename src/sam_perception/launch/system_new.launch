@@ -1,6 +1,4 @@
 <launch>
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
-  <arg name="ros_python" default="$(optenv ROS_PYTHON_EXEC /usr/bin/python3)" />
     <!-- 常用候选:
        panda_manipulator[RRTConnect]
        panda_manipulator[RRT]
@@ -10,6 +8,24 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
+  <arg name="launch_demo" default="false" />
+  <arg name="launch_experiment_logger" default="false" />
+  <arg name="scene_label" default="unknown" />
+  <arg name="experiment_notes" default="" />
+  <arg name="experiment_output_file" default="$(env HOME)/grasp_robot_ws/experiment_results/end_to_end_metrics.csv" />
+  <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
+  <arg name="save_thesis_figures" default="false" />
+  <arg name="save_task_keyframes" default="false" />
+  <arg name="visualize_grasp_on_depth" default="false" />
+  <arg name="visualize_grasp_o3d" default="false" />
+  <arg name="top_k_per_object" default="15" />
+  <arg name="pre_grasp_back_distance" default="0.12" />
+  <arg name="wrist_observation_backoff" default="0.04" />
+  <arg name="wrist_depth_band" default="0.05" />
+  <arg name="wrist_front_depth_percentile" default="20.0" />
+  <arg name="insert_extra_depth_min" default="0.01" />
+  <arg name="insert_depth_margin" default="0.01" />
+  <arg name="insert_extra_depth_max" default="0.09" />
 
 
   <include file="$(find panda_moveit_config)/launch/demo_gazebo_system.launch">
@@ -19,38 +35,56 @@
 
   <node pkg="tf" type="static_transform_publisher"
       name="depth_camera_tf"
-      args="0.164000 -0.201491 0.493261 0 0 -1.57 world depth_camera_link 100" >
+      args="0.175076 -0.108468 0.509569 0 0 -1.57 world depth_camera_link 100" >
   </node>
 
   <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
-      launch-prefix="$(arg anygrasp_python)">
+      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
     <param name="model_type" value="vit_b" />
     <param name="approach_offset" value="0.02" />
+    <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />
+    <param name="figure_output_dir" value="$(arg figure_output_dir)" />
+    <param name="visualize_grasp_on_depth" value="$(arg visualize_grasp_on_depth)" />
+    <param name="visualize_grasp_o3d" value="$(arg visualize_grasp_o3d)" />
+    <param name="top_k_per_object" value="$(arg top_k_per_object)" />
   </node>
 
   <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
-      launch-prefix="$(arg anygrasp_python)">
+      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
     <param name="model_type" value="vit_b" />
     <param name="debug_o3d" value="true" />
+    <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />
+    <param name="figure_output_dir" value="$(arg figure_output_dir)" />
   </node>
 
 
   <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
-        launch-prefix="$(arg ros_python)">
+        if="$(arg launch_demo)"
+        launch-prefix="/usr/bin/python3">
         <param name="planner_id" value="$(arg planner_id)" />
+        <param name="figure_output_dir" value="$(arg figure_output_dir)" />
+        <param name="save_task_keyframes" value="$(arg save_task_keyframes)" />
+        <param name="pre_grasp_back_distance" value="$(arg pre_grasp_back_distance)" />
+        <param name="wrist_observation_backoff" value="$(arg wrist_observation_backoff)" />
+        <param name="wrist_depth_band" value="$(arg wrist_depth_band)" />
+        <param name="wrist_front_depth_percentile" value="$(arg wrist_front_depth_percentile)" />
+        <param name="insert_extra_depth_min" value="$(arg insert_extra_depth_min)" />
+        <param name="insert_depth_margin" value="$(arg insert_depth_margin)" />
+        <param name="insert_extra_depth_max" value="$(arg insert_extra_depth_max)" />
   </node>
 
 
   <!-- <node pkg="panda_pick_place" type="control_panel.py" name="demo_control_panel" output="screen"
-        launch-prefix="$(arg ros_python)">
+        launch-prefix="/usr/bin/python3">
   </node> -->
 
-  <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
-        launch-prefix="$(arg ros_python)">
-  </node>
 
-  <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
-        launch-prefix="$(arg anygrasp_python)">
-  </node>
+
+  <include file="$(find sam_perception)/launch/experiment_logger.launch"
+           if="$(arg launch_experiment_logger)">
+    <arg name="scene_label" value="$(arg scene_label)" />
+    <arg name="notes" value="$(arg experiment_notes)" />
+    <arg name="output_file" value="$(arg experiment_output_file)" />
+  </include>
 
 </launch>

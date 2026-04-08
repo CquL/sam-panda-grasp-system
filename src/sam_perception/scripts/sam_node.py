@@ -13,26 +13,28 @@ import rospy
 import numpy as np
 import cv2
 import struct
+import os
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, PointField
 from std_msgs.msg import Header, Float32MultiArray
 from cv_bridge import CvBridge
 from segment_anything import sam_model_registry, SamPredictor
 import open3d as o3d
 import sensor_msgs.point_cloud2 as pc2
-from std_srvs.srv import Empty
+from std_srvs.srv import Empty, EmptyResponse
 
 class SAMPerceptionNode:
     def __init__(self):
         rospy.init_node('sam_perception_node')
         self.debug_o3d = rospy.get_param("~debug_o3d", False)
         self.bridge = CvBridge()
-        self.model_type = rospy.get_param("~model_type", "vit_b")
-
-        package_path = os.path.dirname(os.path.dirname(__file__))
-        checkpoint = os.environ.get(
-            "SAM_CHECKPOINT_PATH",
-            os.path.join(package_path, "models", "sam_vit_b_01ec64.pth"),
+        self.save_thesis_figures = rospy.get_param("~save_thesis_figures", False)
+        self.figure_output_dir = os.path.expanduser(
+            rospy.get_param("~figure_output_dir", "~/grasp_robot_ws/thesis_figures")
         )
+        self.figure_index = 0
+        
+        package_path = os.path.dirname(os.path.dirname(__file__))
+        checkpoint = os.path.join(package_path, "models", "sam_vit_b_01ec64.pth")
         
         if not os.path.exists(checkpoint):
             rospy.logerr(f"❌ 找不到权重文件: {checkpoint}")
@@ -40,7 +42,7 @@ class SAMPerceptionNode:
 
         rospy.loginfo("⏳ 正在初始化 SAM 模型...")
         try:
-            sam = sam_model_registry[self.model_type](checkpoint=checkpoint)
+            sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
             sam.to(device="cuda") 
             self.predictor = SamPredictor(sam)
             rospy.loginfo("✅ SAM 模型就绪！")
@@ -52,6 +54,7 @@ class SAMPerceptionNode:
         self.depth_sub = rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback)
         self.info_sub = rospy.Subscriber("/camera/color/camera_info", CameraInfo, self.info_callback)
         self.cmd_sub = rospy.Subscriber("/sam/prompt_bbox", Float32MultiArray, self.cmd_callback)
+        self.refresh_bg_srv = rospy.Service("/sam_perception/refresh_background", Empty, self.handle_refresh_background)
         
         self.cloud_pub = rospy.Publisher("/sam_perception/object_cloud", PointCloud2, queue_size=1)
         self.bg_cloud_pub = rospy.Publisher("/sam_perception/background_cloud", PointCloud2, queue_size=1)
@@ -60,6 +63,8 @@ class SAMPerceptionNode:
         self.curr_depth = None
         self.intrinsics = None
         self.sam_result_img = None
+        self.sam_mask_img = None
+        self.vlm_bbox_img = None
 
         self.drawing = False      
         self.box_start = None     
@@ -68,6 +73,9 @@ class SAMPerceptionNode:
 
         cv2.namedWindow("SAM Selection")
         cv2.setMouseCallback("SAM Selection", self.on_mouse_click)
+        cv2.namedWindow("VLM BBoxes")
+        cv2.namedWindow("SAM Result")
+        cv2.namedWindow("SAM Mask")
 
     def info_callback(self, msg):
         self.intrinsics = np.array(msg.K).reshape(3, 3)
@@ -113,6 +121,21 @@ class SAMPerceptionNode:
             x_min, y_min, x_max, y_max = [int(val) for val in data[idx:idx+4]]
             self.target_boxes.append((x_min, y_min, x_max, y_max))
             rospy.loginfo(f"  -> 目标 {i+1}: [{x_min}, {y_min}] -> [{x_max}, {y_max}]")
+
+        if self.curr_rgb is not None:
+            bbox_vis = self.curr_rgb.copy()
+            for i, (x_min, y_min, x_max, y_max) in enumerate(self.target_boxes):
+                cv2.rectangle(bbox_vis, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
+                cv2.putText(
+                    bbox_vis,
+                    f"Target-{i+1}",
+                    (x_min, max(y_min - 10, 0)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 255, 0),
+                    2,
+                )
+            self.vlm_bbox_img = bbox_vis
             
         self.drawing = False  
         self.should_process = True
@@ -128,6 +151,7 @@ class SAMPerceptionNode:
             return
 
         combined_mask = np.zeros(self.curr_rgb.shape[:2], dtype=bool)
+        object_masks = []
         vis_img = self.curr_rgb.copy()
         image_set = False
 
@@ -183,6 +207,12 @@ class SAMPerceptionNode:
                     best_idx = int(np.argmax(scores))
 
                 mask = masks[best_idx]
+                mask = mask & (~combined_mask)
+                if not np.any(mask):
+                    rospy.logwarn(f"⚠️ 目标框 {idx+1} 与已有目标掩膜重叠过多，跳过独立建模")
+                    continue
+
+                object_masks.append(mask)
                 combined_mask |= mask
 
                 cv2.rectangle(vis_img, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
@@ -197,6 +227,8 @@ class SAMPerceptionNode:
 
             vis_img[combined_mask] = vis_img[combined_mask] * 0.5 + np.array([0, 0, 255]) * 0.5
             self.sam_result_img = vis_img.astype(np.uint8)
+            self.sam_mask_img = (combined_mask.astype(np.uint8) * 255)
+            self.save_current_figures()
 
             if self.intrinsics is None:
                 rospy.logwarn("⚠️ 尚未收到相机内参，跳过点云生成")
@@ -207,23 +239,37 @@ class SAMPerceptionNode:
             cx, cy = self.intrinsics[0, 2], self.intrinsics[1, 2]
             u, v = np.meshgrid(np.arange(w_d), np.arange(h_d))
 
-            valid = combined_mask & np.isfinite(self.curr_depth) & (self.curr_depth > 0.1) & (self.curr_depth < 2.0)
-            z = self.curr_depth[valid]
+            all_points = []
+            all_colors_bgr = []
+            all_object_ids = []
 
-            if len(z) == 0:
-                rospy.logwarn("❌ 融合目标区域无有效深度点")
+            for object_idx, object_mask in enumerate(object_masks):
+                valid = object_mask & np.isfinite(self.curr_depth) & (self.curr_depth > 0.1) & (self.curr_depth < 2.0)
+                z = self.curr_depth[valid]
+                if len(z) == 0:
+                    rospy.logwarn(f"⚠️ 目标 {object_idx+1} 无有效深度点，跳过")
+                    continue
+
+                x_3d = (u[valid] - cx) * z / fx
+                y_3d = (v[valid] - cy) * z / fy
+                points = np.stack((x_3d, y_3d, z), axis=-1)
+                colors_bgr = self.curr_rgb[valid]
+
+                if len(points) == 0:
+                    continue
+
+                all_points.append(points)
+                all_colors_bgr.append(colors_bgr)
+                all_object_ids.append(np.full(len(points), object_idx, dtype=np.uint32))
+
+            if len(all_points) == 0:
+                rospy.logwarn("❌ 所有目标均未生成有效点云")
                 return
 
-            x_3d = (u[valid] - cx) * z / fx
-            y_3d = (v[valid] - cy) * z / fy
-            points = np.stack((x_3d, y_3d, z), axis=-1)
-
-            colors_bgr = self.curr_rgb[valid]
+            points = np.concatenate(all_points, axis=0)
+            colors_bgr = np.concatenate(all_colors_bgr, axis=0)
+            object_ids = np.concatenate(all_object_ids, axis=0)
             colors_rgb = colors_bgr[:, ::-1] / 255.0
-
-            if len(points) == 0:
-                rospy.logwarn("❌ 目标点云为空")
-                return
 
             debug_o3d = rospy.get_param("~debug_o3d", False)
             if debug_o3d:
@@ -258,7 +304,7 @@ class SAMPerceptionNode:
 
             rospy.loginfo(f"✨ 点云处理成功！总目标点数: {len(points)}, 环境点数: {len(bg_points)}")
 
-            self.publish_point_cloud(points, colors_bgr)
+            self.publish_point_cloud(points, colors_bgr, object_ids)
             self.publish_background_point_cloud(bg_points)
 
         except Exception as e:
@@ -273,7 +319,56 @@ class SAMPerceptionNode:
                     rospy.logwarn(f"⚠️ predictor.reset_image() 失败: {e}")
             torch.cuda.empty_cache()
 
-    def publish_point_cloud(self, points, colors_bgr):
+    def save_current_figures(self):
+        if not self.save_thesis_figures:
+            return
+
+        os.makedirs(self.figure_output_dir, exist_ok=True)
+        self.figure_index += 1
+        prefix = f"{self.figure_index:03d}"
+
+        if self.curr_rgb is not None:
+            cv2.imwrite(os.path.join(self.figure_output_dir, f"{prefix}_rgb_original.png"), self.curr_rgb)
+        if self.vlm_bbox_img is not None:
+            cv2.imwrite(os.path.join(self.figure_output_dir, f"{prefix}_vlm_bbox_overlay.png"), self.vlm_bbox_img)
+        if self.sam_result_img is not None:
+            cv2.imwrite(os.path.join(self.figure_output_dir, f"{prefix}_sam_overlay.png"), self.sam_result_img)
+        if self.sam_mask_img is not None:
+            cv2.imwrite(os.path.join(self.figure_output_dir, f"{prefix}_sam_mask_binary.png"), self.sam_mask_img)
+
+    def build_full_scene_background(self):
+        if self.curr_depth is None or self.intrinsics is None:
+            return np.empty((0, 3), dtype=np.float32)
+
+        h_d, w_d = self.curr_depth.shape
+        fx, fy = self.intrinsics[0, 0], self.intrinsics[1, 1]
+        cx, cy = self.intrinsics[0, 2], self.intrinsics[1, 2]
+        u, v = np.meshgrid(np.arange(w_d), np.arange(h_d))
+
+        valid = np.isfinite(self.curr_depth) & (self.curr_depth > 0.1) & (self.curr_depth < 2.0)
+        z = self.curr_depth[valid]
+        if len(z) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        x_3d = (u[valid] - cx) * z / fx
+        y_3d = (v[valid] - cy) * z / fy
+        bg_points = np.stack((x_3d, y_3d, z), axis=-1).astype(np.float32)
+
+        if len(bg_points) > 25000:
+            idxs = np.random.choice(len(bg_points), 25000, replace=False)
+            bg_points = bg_points[idxs]
+        return bg_points
+
+    def handle_refresh_background(self, _req):
+        bg_points = self.build_full_scene_background()
+        if len(bg_points) == 0:
+            rospy.logwarn("⚠️ 当前无法重建完整背景点云，跳过 refresh_background。")
+            return EmptyResponse()
+        self.publish_background_point_cloud(bg_points)
+        rospy.loginfo("🔄 已按当前场景重新发布背景点云，用于恢复货架碰撞空间。")
+        return EmptyResponse()
+
+    def publish_point_cloud(self, points, colors_bgr, object_ids):
         if len(points) == 0: return
         header = Header()
         header.stamp = rospy.Time.now()
@@ -286,16 +381,20 @@ class SAMPerceptionNode:
             rgb = struct.unpack('f', struct.pack('i', (int(r) << 16) | (int(g) << 8) | int(b)))[0]
             packed_colors[i] = rgb
 
-        xyzrgb = np.column_stack((points, packed_colors))
         fields = [
             PointField('x', 0, PointField.FLOAT32, 1),
             PointField('y', 4, PointField.FLOAT32, 1),
             PointField('z', 8, PointField.FLOAT32, 1),
             PointField('rgb', 12, PointField.FLOAT32, 1),
+            PointField('object_id', 16, PointField.UINT32, 1),
         ]
-        pc2_msg = pc2.create_cloud(header, fields, xyzrgb)
+        rows = [
+            (float(points[i, 0]), float(points[i, 1]), float(points[i, 2]), float(packed_colors[i]), int(object_ids[i]))
+            for i in range(len(points))
+        ]
+        pc2_msg = pc2.create_cloud(header, fields, rows)
         self.cloud_pub.publish(pc2_msg)
-        rospy.loginfo("☁️ 已发布多目标组合点云！")
+        rospy.loginfo(f"☁️ 已发布多目标带 object_id 点云！目标数: {len(np.unique(object_ids))}")
 
     def publish_background_point_cloud(self, bg_points):
         if len(bg_points) == 0: return
@@ -321,9 +420,15 @@ class SAMPerceptionNode:
                 if self.drawing and self.box_start is not None:
                     pass 
                 cv2.imshow("SAM Selection", vis_img)
+
+            if self.vlm_bbox_img is not None:
+                cv2.imshow("VLM BBoxes", self.vlm_bbox_img)
             
             if self.sam_result_img is not None:
                 cv2.imshow("SAM Result", self.sam_result_img)
+
+            if self.sam_mask_img is not None:
+                cv2.imshow("SAM Mask", self.sam_mask_img)
 
             if self.should_process:
                 self.process_segmentation()
