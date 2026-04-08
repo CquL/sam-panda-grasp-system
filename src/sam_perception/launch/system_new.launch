@@ -8,6 +8,8 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
+  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD /usr/lib/x86_64-linux-gnu/libffi.so.7)" />
   <arg name="launch_demo" default="false" />
   <arg name="launch_experiment_logger" default="false" />
   <arg name="scene_label" default="unknown" />
@@ -39,7 +41,7 @@
   </node>
 
   <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
     <param name="model_type" value="vit_b" />
     <param name="approach_offset" value="0.02" />
     <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />
@@ -50,7 +52,7 @@
   </node>
 
   <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
     <param name="model_type" value="vit_b" />
     <param name="debug_o3d" value="true" />
     <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />

@@ -219,6 +219,7 @@ sam-panda-grasp-system/
 cd /path/to/sam-panda-grasp-system
 bash scripts/check_export_env.sh
 export DASHSCOPE_API_KEY=your_key
+export ANYGRASP_PYTHON=/path/to/your/conda/env/bin/python
 ```
 
 ### 参考启动方式

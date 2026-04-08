@@ -1,5 +1,7 @@
 <launch>
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
+  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD /usr/lib/x86_64-linux-gnu/libffi.so.7)" />
   <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
   <arg name="save_task_keyframes" default="false" />
   <arg name="visualize_grasp_o3d" default="false" />
@@ -37,7 +39,7 @@
   </node>
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
   </node>
 
 
