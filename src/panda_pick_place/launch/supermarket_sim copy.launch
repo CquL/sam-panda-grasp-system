@@ -16,7 +16,7 @@
           launch-prefix="$(arg anygrasp_python)">
     </node> -->
 
-  <!-- export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 -->
+  <!-- export LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) -->
   <!-- <node pkg="grasp_detector_ros" type="detector_node_open3d.py" name="grasp_detector_node" output="screen"
           launch-prefix="$(arg anygrasp_python)">
     </node> -->

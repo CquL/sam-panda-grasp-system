@@ -13,7 +13,7 @@
 
   <!-- <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen">
         
-        <env name="LD_PRELOAD" value="/usr/lib/x86_64-linux-gnu/libffi.so.7" />
+        <env name="LD_PRELOAD" value="$(optenv ANYGRASP_LD_PRELOAD)" />
 
         <param name="model_type" value="vit_b" />
   </node> -->

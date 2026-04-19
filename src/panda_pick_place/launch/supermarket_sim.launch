@@ -10,7 +10,7 @@
       args="0.164000 -0.201491 0.493261 0 0 -1.57 world depth_camera_link 100" />
 
   <node pkg="yolov5_ros" type="detect.py" name="yolov5_detector" output="screen"
-          launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+          launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
       <param name="weights" value="yolov5m.pt"/>
       <param name="data" value="$(find yolov5_ros)/src/yolov5/data/coco128.yaml"/>
       <param name="confidence_threshold" value="0.25"/>
@@ -31,7 +31,7 @@
   </node>
 
   <node pkg="grasp_detector_ros" type="grasp_inference_node.py" name="grasp_generator_node" output="screen"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
   </node>
 
 </launch>

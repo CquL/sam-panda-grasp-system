@@ -134,7 +134,7 @@
   </node>
 
   <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
     <param name="model_type" value="vit_b" />
     <param name="approach_offset" value="0.02" />
     <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />
@@ -175,7 +175,7 @@
   </node>
 
   <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
-      launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
     <param name="model_type" value="vit_b" />
     <param name="debug_o3d" value="true" />
     <param name="publish_background_collision_cloud" value="$(arg publish_background_collision_cloud)" />
@@ -285,17 +285,17 @@
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
         if="$(arg launch_wrist_vlm)"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
   </node>
 
   <node pkg="sam_perception" type="global_vlm_target_node.py" name="global_vlm_target_node" output="screen"
         if="$(arg launch_global_vlm)"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
   </node>
 
   <node pkg="sam_perception" type="semantic_reranker.py" name="semantic_reranker" output="screen"
         if="$(arg launch_semantic_reranker)"
-        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
     <param name="strict_width_filter" value="$(arg strict_width_filter)" />
     <param name="gripper_width_max" value="$(arg gripper_width_max)" />
     <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />

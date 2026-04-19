@@ -8,7 +8,9 @@ import os
 import re
 import sys
 
-os.environ["LD_PRELOAD"] = "/usr/lib/x86_64-linux-gnu/libffi.so.7"
+ld_preload = os.environ.get("ANYGRASP_LD_PRELOAD", "").strip()
+if ld_preload:
+    os.environ["LD_PRELOAD"] = ld_preload
 sys.path = [p for p in sys.path if "/usr/lib/python3/dist-packages" not in p]
 
 import cv2
