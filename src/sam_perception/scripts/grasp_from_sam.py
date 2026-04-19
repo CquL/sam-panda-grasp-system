@@ -14,6 +14,9 @@ from sensor_msgs import point_cloud2
 from geometry_msgs.msg import PoseStamped, PoseArray, Pose, Point
 from std_msgs.msg import Float32MultiArray
 from tf.transformations import quaternion_from_matrix
+import tf.transformations as tft
+import tf2_ros
+from gazebo_msgs.srv import GetModelState
 from cv_bridge import CvBridge
 import open3d as o3d
 from visualization_msgs.msg import Marker, MarkerArray
@@ -46,6 +49,16 @@ class SamGraspNode:
         self.latest_depth = None
         self.latest_rgb = None
         self.intrinsics = None
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.get_model_state = None
+        self.shelf_model_name = str(rospy.get_param("~shelf_model_name", "narrow_supermarket_shelf_enclosed_0"))
+        self.shelf_pose_fallback = {
+            "x": float(rospy.get_param("~shelf_pose_fallback_x", 0.737098)),
+            "y": float(rospy.get_param("~shelf_pose_fallback_y", -0.148598)),
+            "z": float(rospy.get_param("~shelf_pose_fallback_z", 0.205537)),
+            "yaw": float(rospy.get_param("~shelf_pose_fallback_yaw", 0.0)),
+        }
         self.o3d_lock = threading.Lock()
         self.o3d_raw_items = None
         self.o3d_corrected_items = None
@@ -84,6 +97,11 @@ class SamGraspNode:
         self.pub_info = rospy.Publisher('/graspnet/grasp_info_raw', Float32MultiArray, queue_size=1)
         self.pub_raw_markers = rospy.Publisher('/graspnet/raw_grasp_markers', MarkerArray, queue_size=1)
         self.pub_corrected_markers = rospy.Publisher('/graspnet/corrected_grasp_markers', MarkerArray, queue_size=1)
+        try:
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=0.5)
+            self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState, persistent=True)
+        except Exception:
+            rospy.logwarn("⚠️ GraspNet 节点未连接到 /gazebo/get_model_state，将使用货架 fallback 位姿。")
 
     def rgb_callback(self, msg):
         try:
@@ -99,6 +117,195 @@ class SamGraspNode:
 
     def info_callback(self, msg):
         self.intrinsics = np.array(msg.K, dtype=np.float64).reshape(3, 3)
+
+    def get_shelf_world_pose(self):
+        if self.get_model_state is not None:
+            try:
+                resp = self.get_model_state(self.shelf_model_name, "world")
+                if getattr(resp, "success", False):
+                    q = resp.pose.orientation
+                    yaw = float(tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2])
+                    return {
+                        "x": float(resp.pose.position.x),
+                        "y": float(resp.pose.position.y),
+                        "z": float(resp.pose.position.z),
+                        "yaw": yaw,
+                    }
+            except Exception as e:
+                rospy.logwarn(f"⚠️ 获取货架位姿失败，改用 fallback: {e}")
+        return dict(self.shelf_pose_fallback)
+
+    def get_sensor_to_world_matrix(self, source_frame):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "world", source_frame, rospy.Time(0), rospy.Duration(0.5)
+            )
+            q = transform.transform.rotation
+            mat = tft.quaternion_matrix([q.x, q.y, q.z, q.w])
+            mat[:3, 3] = np.array(
+                [
+                    transform.transform.translation.x,
+                    transform.transform.translation.y,
+                    transform.transform.translation.z,
+                ],
+                dtype=np.float64,
+            )
+            return mat
+        except Exception as e:
+            rospy.logwarn(f"⚠️ 获取 {source_frame} -> world TF 失败: {e}")
+            return None
+
+    def get_shelf_inner_regions_local(self):
+        return [
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.235, "zmax": 0.385},
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.435, "zmax": 0.585},
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.635, "zmax": 0.775},
+        ]
+
+    def estimate_box_front_fallback_grasp(self, object_cloud, source_frame, width_limit, approach_offset):
+        if len(object_cloud) < 30:
+            return None
+
+        sensor_to_world = self.get_sensor_to_world_matrix(source_frame)
+        if sensor_to_world is None:
+            return None
+        world_to_sensor = np.linalg.inv(sensor_to_world)
+
+        shelf_pose = self.get_shelf_world_pose()
+        shelf_tf = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        shelf_tf[:3, 3] = np.array([shelf_pose["x"], shelf_pose["y"], shelf_pose["z"]], dtype=np.float64)
+        world_to_shelf = np.linalg.inv(shelf_tf)
+
+        points_h = np.hstack([object_cloud.astype(np.float64), np.ones((len(object_cloud), 1), dtype=np.float64)])
+        points_world = (sensor_to_world @ points_h.T).T
+        points_local = (world_to_shelf @ points_world.T).T[:, :3]
+
+        mins = np.min(points_local, axis=0)
+        maxs = np.max(points_local, axis=0)
+        size_local = maxs - mins
+        width_y = float(size_local[1])
+        depth_x = float(size_local[0])
+        height_z = float(size_local[2])
+
+        fallback_width = float(width_y + 0.004)
+        if fallback_width > width_limit:
+            return None
+
+        center_local = np.array(
+            [
+                0.5 * (mins[0] + maxs[0]),
+                0.5 * (mins[1] + maxs[1]),
+                mins[2] + max(0.04, min(0.5 * height_z, height_z - 0.02)),
+            ],
+            dtype=np.float64,
+        )
+
+        center_world_h = shelf_tf @ np.array([center_local[0], center_local[1], center_local[2], 1.0], dtype=np.float64)
+        center_world = center_world_h[:3]
+
+        approach_world = shelf_tf[:3, :3] @ np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        approach_world = approach_world / max(np.linalg.norm(approach_world), 1e-6)
+        down_world = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+        lateral_world = np.cross(approach_world, down_world)
+        lateral_norm = np.linalg.norm(lateral_world)
+        if lateral_norm < 1e-6:
+            return None
+        lateral_world = lateral_world / lateral_norm
+
+        rot_world = np.column_stack([approach_world, down_world, lateral_world])
+        rot_sensor = world_to_sensor[:3, :3] @ rot_world
+        translation_sensor = (world_to_sensor @ np.array([center_world[0], center_world[1], center_world[2], 1.0], dtype=np.float64))[:3]
+        translation_sensor = translation_sensor - rot_sensor[:, 2] * approach_offset
+
+        return {
+            "score": 0.20,
+            "width": fallback_width,
+            "depth": float(max(0.02, min(0.08, depth_x))),
+            "rotation": rot_sensor.astype(np.float32),
+            "translation": translation_sensor.astype(np.float32),
+        }
+
+    def compute_candidate_context_features(self, translations, rotations, source_frame, xyz, object_ids, current_object_id):
+        num_candidates = len(translations)
+        neutral = {
+            "forward_alignment": np.zeros(num_candidates, dtype=np.float32),
+            "cavity_clearance_norm": np.zeros(num_candidates, dtype=np.float32),
+            "neighbor_clearance_norm": np.zeros(num_candidates, dtype=np.float32),
+            "context_valid_mask": np.ones(num_candidates, dtype=bool),
+            "inside_mask": np.zeros(num_candidates, dtype=bool),
+        }
+        sensor_to_world = self.get_sensor_to_world_matrix(source_frame)
+        if sensor_to_world is None:
+            return neutral
+
+        shelf_pose = self.get_shelf_world_pose()
+        shelf_tf = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        shelf_tf[:3, 3] = np.array([shelf_pose["x"], shelf_pose["y"], shelf_pose["z"]], dtype=np.float64)
+        world_to_shelf = np.linalg.inv(shelf_tf)
+        rot_world_to_shelf = world_to_shelf[:3, :3]
+        rot_sensor_to_world = sensor_to_world[:3, :3]
+
+        translations_world = (rot_sensor_to_world @ translations.T).T + sensor_to_world[:3, 3]
+        translations_world_h = np.hstack([translations_world, np.ones((num_candidates, 1), dtype=np.float64)])
+        translations_local = (world_to_shelf @ translations_world_h.T).T[:, :3]
+
+        approach_world = np.einsum("ij,njk->nik", rot_sensor_to_world, rotations)[:, :, 0]
+        approach_local = (rot_world_to_shelf @ approach_world.T).T
+        # 这里只关心“是否沿货架法向”，不关心符号。
+        # 实际执行端已经会强制沿货架法向插入，所以此处不应因正负号把候选全过滤掉。
+        forward_alignment = np.clip(np.abs(approach_local[:, 0]), 0.0, 1.0).astype(np.float32)
+
+        preferred_shelf_clearance = float(rospy.get_param("~preferred_shelf_clearance", 0.04))
+        preferred_neighbor_clearance = float(rospy.get_param("~preferred_neighbor_clearance", 0.05))
+        _min_shelf_forward_alignment = float(rospy.get_param("~min_shelf_forward_alignment", 0.25))
+
+        cavity_clearance = np.zeros(num_candidates, dtype=np.float32)
+        inside_mask = np.zeros(num_candidates, dtype=bool)
+        regions = self.get_shelf_inner_regions_local()
+        for idx, point in enumerate(translations_local):
+            for region in regions:
+                if (
+                    region["xmin"] <= point[0] <= region["xmax"]
+                    and region["ymin"] <= point[1] <= region["ymax"]
+                    and region["zmin"] <= point[2] <= region["zmax"]
+                ):
+                    inside_mask[idx] = True
+                    cavity_clearance[idx] = float(
+                        min(
+                            point[0] - region["xmin"],
+                            region["xmax"] - point[0],
+                            point[1] - region["ymin"],
+                            region["ymax"] - point[1],
+                            point[2] - region["zmin"],
+                            region["zmax"] - point[2],
+                        )
+                    )
+                    break
+
+        cavity_clearance_norm = np.clip(cavity_clearance / max(1e-6, preferred_shelf_clearance), 0.0, 1.0).astype(np.float32)
+
+        other_points = xyz[object_ids != current_object_id]
+        if len(other_points) > 1500:
+            sample_idx = np.random.choice(len(other_points), 1500, replace=False)
+            other_points = other_points[sample_idx]
+        if len(other_points) > 0:
+            deltas = translations[:, None, :] - other_points[None, :, :]
+            neighbor_clearance = np.linalg.norm(deltas, axis=2).min(axis=1)
+        else:
+            neighbor_clearance = np.full(num_candidates, preferred_neighbor_clearance, dtype=np.float32)
+        neighbor_clearance_norm = np.clip(neighbor_clearance / max(1e-6, preferred_neighbor_clearance), 0.0, 1.0).astype(np.float32)
+
+        enforce_shelf_cavity_filter = bool(rospy.get_param("~enforce_shelf_cavity_filter", False))
+        # 默认不再把腔体约束当成硬过滤，只作为打分项。
+        # 否则在相机/模型有轻微偏差时很容易把所有候选直接杀光。
+        context_valid_mask = inside_mask.copy() if enforce_shelf_cavity_filter else np.ones(num_candidates, dtype=bool)
+        return {
+            "forward_alignment": forward_alignment,
+            "cavity_clearance_norm": cavity_clearance_norm,
+            "neighbor_clearance_norm": neighbor_clearance_norm,
+            "context_valid_mask": context_valid_mask,
+            "inside_mask": inside_mask,
+        }
 
     def callback(self, pc_msg):
         try:
@@ -117,8 +324,18 @@ class SamGraspNode:
                 return
 
             num_point = 8192
+            grasp_sampling_passes = max(1, int(rospy.get_param("~grasp_sampling_passes", 3)))
             approach_offset = rospy.get_param("~approach_offset", 0.02)
-            penalty_weight = 1.5
+            penalty_weight = float(rospy.get_param("~center_penalty_weight", 1.5))
+            front_alignment_weight = float(rospy.get_param("~front_alignment_weight", 0.25))
+            width_preference_weight = float(rospy.get_param("~width_preference_weight", 0.35))
+            shelf_clearance_weight = float(rospy.get_param("~shelf_clearance_weight", 0.45))
+            neighbor_clearance_weight = float(rospy.get_param("~neighbor_clearance_weight", 0.35))
+            allow_clearance_fallback = bool(rospy.get_param("~allow_clearance_fallback", False))
+            enable_box_fallback_grasp = bool(rospy.get_param("~enable_box_fallback_grasp", True))
+            enable_width_filter = bool(rospy.get_param("~enable_width_filter", True))
+            gripper_width_max = float(rospy.get_param("~gripper_width_max", 0.078))
+            gripper_width_margin = float(rospy.get_param("~gripper_width_margin", 0.004))
 
             pose_array_msg = PoseArray()
             pose_array_msg.header.stamp = rospy.Time.now()
@@ -132,6 +349,8 @@ class SamGraspNode:
             widths_vis = []
             depths_vis = []
             vis_cloud_parts = []
+            published_object_count = 0
+            skipped_width_object_count = 0
 
             for object_id in unique_object_ids:
                 object_cloud = xyz[object_ids == object_id]
@@ -142,32 +361,78 @@ class SamGraspNode:
 
                 vis_cloud_parts.append(object_cloud)
 
-                if len(object_cloud) >= num_point:
-                    idxs = np.random.choice(len(object_cloud), num_point, replace=False)
+                sampled_cloud = None
+                merged_grasps = []
+                successful_passes = 0
+                for pass_idx in range(grasp_sampling_passes):
+                    if len(object_cloud) >= num_point:
+                        idxs = np.random.choice(len(object_cloud), num_point, replace=False)
+                    else:
+                        idxs = np.random.choice(len(object_cloud), num_point, replace=True)
+                    sampled_cloud_pass = object_cloud[idxs]
+                    if sampled_cloud is None:
+                        sampled_cloud = sampled_cloud_pass
+
+                    cloud_tensor = torch.from_numpy(sampled_cloud_pass[np.newaxis].astype(np.float32)).to(self.device)
+                    end_points = {'point_clouds': cloud_tensor, 'cloud_colors': cloud_tensor}
+                    torch.cuda.empty_cache()
+                    with torch.no_grad():
+                        end_points = self.net(end_points)
+                        grasp_preds = pred_decode(end_points)
+
+                    grasps_array_pass = grasp_preds[0].detach().cpu().numpy()
+                    if len(grasps_array_pass) > 0:
+                        merged_grasps.append(grasps_array_pass)
+                        successful_passes += 1
+
+                    del cloud_tensor
+                    del end_points
+                    torch.cuda.empty_cache()
+
+                width_limit = max(0.0, gripper_width_max - gripper_width_margin)
+                fallback_grasp = None
+                if enable_box_fallback_grasp:
+                    fallback_grasp = self.estimate_box_front_fallback_grasp(
+                        object_cloud=object_cloud,
+                        source_frame=pc_msg.header.frame_id,
+                        width_limit=width_limit,
+                        approach_offset=approach_offset,
+                    )
+
+                if len(merged_grasps) == 0:
+                    if fallback_grasp is not None:
+                        rospy.logwarn(
+                            f"目标 {object_id}: GraspNet 在 {grasp_sampling_passes} 次随机采样中均未输出姿态，"
+                            "改用几何 box fallback 候选。"
+                        )
+                        scores = np.array([fallback_grasp["score"]], dtype=np.float32)
+                        widths = np.array([fallback_grasp["width"]], dtype=np.float32)
+                        depths = np.array([fallback_grasp["depth"]], dtype=np.float32)
+                        rotations = fallback_grasp["rotation"][None, :, :]
+                        translations = fallback_grasp["translation"][None, :]
+                        raw_scores = scores.copy()
+                        raw_translations = translations.copy()
+                        raw_rotations = rotations.copy()
+                    else:
+                        rospy.logwarn(
+                            f"目标 {object_id}: GraspNet 在 {grasp_sampling_passes} 次随机采样中均未输出姿态"
+                        )
+                        continue
                 else:
-                    idxs = np.random.choice(len(object_cloud), num_point, replace=True)
-                sampled_cloud = object_cloud[idxs]
+                    grasps_array = np.concatenate(merged_grasps, axis=0)
+                    rospy.loginfo(
+                        f"目标 {object_id}: 多次采样汇总候选 {len(grasps_array)} 个 "
+                        f"(successful_passes={successful_passes}/{grasp_sampling_passes})"
+                    )
 
-                cloud_tensor = torch.from_numpy(sampled_cloud[np.newaxis].astype(np.float32)).to(self.device)
-                end_points = {'point_clouds': cloud_tensor, 'cloud_colors': cloud_tensor}
-                torch.cuda.empty_cache()
-                with torch.no_grad():
-                    end_points = self.net(end_points)
-                    grasp_preds = pred_decode(end_points)
-
-                grasps_array = grasp_preds[0].detach().cpu().numpy()
-                if len(grasps_array) == 0:
-                    rospy.logwarn(f"目标 {object_id}: GraspNet 没有输出姿态")
-                    continue
-
-                scores = grasps_array[:, 0]
-                widths = grasps_array[:, 1]
-                depths = grasps_array[:, 3]
-                rotations = grasps_array[:, 4:13].reshape(-1, 3, 3)
-                translations = grasps_array[:, 13:16]
-                raw_scores = scores.copy()
-                raw_translations = translations.copy()
-                raw_rotations = rotations.copy()
+                    scores = grasps_array[:, 0]
+                    widths = grasps_array[:, 1]
+                    depths = grasps_array[:, 3]
+                    rotations = grasps_array[:, 4:13].reshape(-1, 3, 3)
+                    translations = grasps_array[:, 13:16]
+                    raw_scores = scores.copy()
+                    raw_translations = translations.copy()
+                    raw_rotations = rotations.copy()
 
                 if np.max(scores) < 0.05:
                     rospy.logwarn(f"目标 {object_id}: 所有抓取分数过低，跳过")
@@ -176,15 +441,95 @@ class SamGraspNode:
                 forward_vector = rotations[:, :, 2]
                 translations = translations + forward_vector * approach_offset
 
-                object_center = np.mean(sampled_cloud, axis=0)
+                object_center = np.mean(object_cloud, axis=0)
                 distances = np.linalg.norm(translations - object_center, axis=1)
                 max_dist = np.max(distances) + 1e-5
                 normalized_distances = distances / max_dist
-                corrected_scores = scores - (penalty_weight * normalized_distances)
+                context = self.compute_candidate_context_features(
+                    translations=translations,
+                    rotations=rotations,
+                    source_frame=pc_msg.header.frame_id,
+                    xyz=xyz,
+                    object_ids=object_ids,
+                    current_object_id=object_id,
+                )
+                forward_alignment = context["forward_alignment"]
+                cavity_clearance_norm = context["cavity_clearance_norm"]
+                neighbor_clearance_norm = context["neighbor_clearance_norm"]
+                corrected_scores = (
+                    scores
+                    - (penalty_weight * normalized_distances)
+                    + (front_alignment_weight * forward_alignment)
+                    + (shelf_clearance_weight * cavity_clearance_norm)
+                    + (neighbor_clearance_weight * neighbor_clearance_norm)
+                )
 
-                top_k = min(self.top_k_per_object, len(corrected_scores))
-                top_indices = np.argsort(-corrected_scores)[:top_k]
-                raw_top_indices = np.argsort(-raw_scores)[:top_k]
+                valid_indices = np.arange(len(corrected_scores), dtype=np.int32)
+                if enable_width_filter:
+                    valid_width = widths <= width_limit
+                    if np.any(valid_width):
+                        invalid_count = int(np.count_nonzero(~valid_width))
+                        if invalid_count > 0:
+                            rospy.loginfo(
+                                f"目标 {object_id}: 宽度过滤剔除 {invalid_count} 个候选 "
+                                f"(limit={width_limit:.3f} m)"
+                            )
+                        valid_indices = np.flatnonzero(valid_width).astype(np.int32)
+                    else:
+                        if fallback_grasp is not None and fallback_grasp["width"] <= width_limit:
+                            rospy.logwarn(
+                                f"目标 {object_id}: 所有 GraspNet 候选宽度均超过夹爪上限 {width_limit:.3f} m，"
+                                "改用几何 box fallback 候选。"
+                            )
+                            scores = np.array([fallback_grasp["score"]], dtype=np.float32)
+                            widths = np.array([fallback_grasp["width"]], dtype=np.float32)
+                            depths = np.array([fallback_grasp["depth"]], dtype=np.float32)
+                            rotations = fallback_grasp["rotation"][None, :, :]
+                            translations = fallback_grasp["translation"][None, :]
+                            raw_scores = scores.copy()
+                            raw_translations = translations.copy()
+                            raw_rotations = rotations.copy()
+                            corrected_scores = scores.copy()
+                            valid_indices = np.array([0], dtype=np.int32)
+                        else:
+                            rospy.logwarn(
+                                f"目标 {object_id}: 所有候选宽度均超过夹爪上限 {width_limit:.3f} m，"
+                                "当前轮直接标记为不可抓并跳过发布。"
+                            )
+                            skipped_width_object_count += 1
+                            continue
+                width_valid_indices = valid_indices.copy()
+
+                context_valid_indices = np.flatnonzero(context["context_valid_mask"]).astype(np.int32)
+                if len(context_valid_indices) > 0 and len(context_valid_indices) < len(valid_indices):
+                    context_invalid_count = int(np.count_nonzero(~context["context_valid_mask"]))
+                    if context_invalid_count > 0:
+                        rospy.loginfo(
+                            f"目标 {object_id}: 腔体约束过滤剔除 {context_invalid_count} 个候选"
+                        )
+                    valid_indices = np.intersect1d(valid_indices, context_valid_indices, assume_unique=False)
+                    if len(valid_indices) == 0:
+                        if allow_clearance_fallback:
+                            rospy.logwarn(f"目标 {object_id}: 腔体约束过滤后无候选，回退到宽度过滤结果。")
+                            valid_indices = width_valid_indices
+                        else:
+                            rospy.logwarn(
+                                f"目标 {object_id}: 腔体约束过滤后无候选，当前轮直接跳过，避免退回到坏姿态。"
+                            )
+                            continue
+
+                if width_limit > 1e-6:
+                    width_ratio = np.clip(widths / width_limit, 0.0, 1.5)
+                    corrected_scores = corrected_scores - (width_preference_weight * width_ratio)
+
+                if len(valid_indices) == 0:
+                    rospy.logwarn(f"目标 {object_id}: 没有剩余可用候选，跳过")
+                    continue
+
+                ranked_valid = valid_indices[np.argsort(-corrected_scores[valid_indices])]
+                top_k = min(self.top_k_per_object, len(ranked_valid))
+                top_indices = ranked_valid[:top_k]
+                raw_top_indices = np.argsort(-raw_scores)[: min(self.top_k_per_object, len(raw_scores))]
                 rospy.loginfo(f"目标 {object_id}: 保留姿态 {top_k} 个")
 
                 raw_rot_vis.append(raw_rotations)
@@ -215,14 +560,16 @@ class SamGraspNode:
                     pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = q
                     pose_array_msg.poses.append(pose)
                     info_data.extend([float(object_id), widths[idx], corrected_scores[idx], depths[idx]])
-
-                del cloud_tensor
-                del end_points
-                torch.cuda.empty_cache()
+                published_object_count += 1
 
             if len(pose_array_msg.poses) == 0:
-                rospy.logwarn("没有生成任何可用的抓取姿态")
+                rospy.logwarn("没有生成任何可用的抓取姿态（可能都超出夹爪宽度上限或分数不足）")
                 return
+
+            if skipped_width_object_count > 0:
+                rospy.logwarn(
+                    f"⚠️ 本轮有 {skipped_width_object_count} 个目标因所有候选超出夹爪宽度上限而被跳过。"
+                )
 
             rospy.loginfo("🧪 正在汇总各物体抓取结果并准备发布...")
             vis_cloud = np.concatenate(vis_cloud_parts, axis=0) if len(vis_cloud_parts) > 0 else xyz
@@ -260,7 +607,7 @@ class SamGraspNode:
                 )
             )
             rospy.loginfo(
-                f"⚡ 已按物体独立发布抓取姿态！物体数: {len(unique_object_ids)}, 总姿态数: {len(pose_array_msg.poses)}"
+                f"⚡ 已按物体独立发布抓取姿态！物体数: {published_object_count}, 总姿态数: {len(pose_array_msg.poses)}"
             )
 
             all_indices = np.arange(len(raw_rot_vis))

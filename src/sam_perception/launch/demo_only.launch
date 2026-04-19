@@ -1,17 +1,100 @@
 <launch>
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
-  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD /usr/lib/x86_64-linux-gnu/libffi.so.7)" />
+  <arg name="basket_x" default="0.393296" />
+  <arg name="basket_y" default="-0.315779" />
+  <arg name="basket_z" default="0.140719" />
+  <arg name="use_basket_slot_grid" default="false" />
+  <arg name="use_fixed_shelf_collision" default="true" />
+  <arg name="force_shelf_normal_approach" default="true" />
+  <arg name="shelf_model_name" default="narrow_supermarket_shelf_enclosed_0" />
+  <arg name="shelf_pose_fallback_x" default="0.737098" />
+  <arg name="shelf_pose_fallback_y" default="-0.148598" />
+  <arg name="shelf_pose_fallback_z" default="0.205537" />
+  <arg name="shelf_pose_fallback_yaw" default="0.0" />
   <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
   <arg name="save_task_keyframes" default="false" />
   <arg name="visualize_grasp_o3d" default="false" />
+  <arg name="grasp_sampling_passes" default="3" />
+  <arg name="object_front_depth_percentile" default="15.0" />
+  <arg name="object_depth_gate_band" default="0.06" />
+  <arg name="object_component_min_pixels" default="120" />
+  <arg name="publish_background_collision_cloud" default="false" />
+  <arg name="background_min_depth" default="0.55" />
+  <arg name="object_clearance_margin_x" default="0.06" />
+  <arg name="object_clearance_margin_y" default="0.08" />
+  <arg name="object_clearance_margin_z" default="0.08" />
+  <arg name="collision_clearance_margin_px" default="70" />
+  <arg name="collision_clearance_kernel" default="121" />
+  <arg name="collision_clearance_depth_band" default="0.35" />
+  <arg name="center_penalty_weight" default="1.5" />
+  <arg name="front_alignment_weight" default="0.55" />
+  <arg name="width_preference_weight" default="0.35" />
+  <arg name="shelf_clearance_weight" default="0.45" />
+  <arg name="neighbor_clearance_weight" default="0.35" />
+  <arg name="preferred_shelf_clearance" default="0.04" />
+  <arg name="preferred_neighbor_clearance" default="0.05" />
+  <arg name="min_shelf_forward_alignment" default="0.25" />
+  <arg name="allow_clearance_fallback" default="false" />
+  <arg name="enable_width_filter" default="true" />
+  <arg name="gripper_width_max" default="0.078" />
+  <arg name="gripper_width_margin" default="0.006" />
   <arg name="pre_grasp_back_distance" default="0.12" />
+  <arg name="pre_grasp_back_distance_candidates" default="[0.12, 0.15, 0.18]" />
   <arg name="wrist_observation_backoff" default="0.04" />
   <arg name="wrist_depth_band" default="0.05" />
   <arg name="wrist_front_depth_percentile" default="20.0" />
   <arg name="insert_extra_depth_min" default="0.01" />
   <arg name="insert_depth_margin" default="0.01" />
   <arg name="insert_extra_depth_max" default="0.09" />
+  <arg name="wrist_visibility_margin_px" default="8" />
+  <arg name="wrist_require_full_visibility" default="false" />
+  <arg name="wrist_min_insert_fraction" default="0.45" />
+  <arg name="use_iterative_wrist_alignment" default="false" />
+  <arg name="wrist_alignment_max_iters" default="1" />
+  <arg name="use_final_wrist_alignment" default="false" />
+  <arg name="wrist_alignment_allow_vertical" default="false" />
+  <arg name="use_wrist_guided_insert_distance" default="false" />
+  <arg name="wrist_extra_insert_max" default="0.03" />
+  <arg name="wrist_alignment_tol" default="0.008" />
+  <arg name="wrist_grasp_depth_margin" default="0.005" />
+  <arg name="wrist_grasp_forward_min" default="0.03" />
+  <arg name="wrist_grasp_forward_max" default="0.09" />
+  <arg name="refresh_collision_before_pick" default="true" />
+  <arg name="grasp_corridor_padding" default="0.03" />
+  <arg name="enable_gazebo_attach" default="false" />
+  <arg name="gazebo_attach_distance_threshold" default="0.18" />
+  <arg name="gazebo_attach_link_name" default="panda_link8" />
+  <arg name="transport_step_size" default="0.025" />
+  <arg name="insert_step_size" default="0.025" />
+  <arg name="retreat_step_size" default="0.025" />
+  <arg name="lift_step_size" default="0.012" />
+  <arg name="use_pose_preserving_transport" default="false" />
+  <arg name="place_hover_height" default="0.05" />
+  <arg name="place_release_height_offset" default="0.02" />
+  <arg name="place_orientation_mode" default="preserve" />
+  <arg name="place_allow_position_only_fallback" default="false" />
+  <arg name="simple_place_drop" default="true" />
+  <arg name="grasp_roll_variants" default="['x_down']" />
+  <arg name="grasp_force" default="50.0" />
+  <arg name="grasp_width_margin" default="0.004" />
+  <arg name="grasp_command_width_min" default="0.010" />
+  <arg name="grasp_command_width_max" default="0.078" />
+  <arg name="grasp_epsilon_inner" default="0.020" />
+  <arg name="grasp_epsilon_outer" default="0.020" />
+  <arg name="grasp_timeout_sec" default="4.0" />
+  <arg name="soft_grasp_width_tolerance" default="0.030" />
+  <arg name="soft_grasp_min_width" default="0.035" />
+  <arg name="soft_grasp_max_width" default="0.078" />
+  <arg name="refresh_collision_after_each_place" default="false" />
+  <arg name="launch_global_vlm" default="false" />
+  <arg name="launch_semantic_reranker" default="false" />
+  <arg name="strict_width_filter" default="true" />
+  <arg name="scheduler_pose_topic" default="/graspnet/grasp_pose_array_raw" />
+  <arg name="scheduler_info_topic" default="/graspnet/grasp_info_raw" />
+  <arg name="fallback_pose_topic" default="/graspnet/grasp_pose_array_raw" />
+  <arg name="fallback_info_topic" default="/graspnet/grasp_info_raw" />
+  <arg name="fallback_timeout_sec" default="1.5" />
+  <arg name="semantic_weight" default="0.0" />
     <!-- 常用候选:
        panda_manipulator[RRTConnect]
        panda_manipulator[RRT]
@@ -23,23 +106,105 @@
   <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
         launch-prefix="/usr/bin/python3">
     <param name="planner_id" value="$(arg planner_id)" />
+    <param name="basket_x" value="$(arg basket_x)" />
+    <param name="basket_y" value="$(arg basket_y)" />
+    <param name="basket_z" value="$(arg basket_z)" />
+    <param name="use_basket_slot_grid" value="$(arg use_basket_slot_grid)" />
+    <param name="use_fixed_shelf_collision" value="$(arg use_fixed_shelf_collision)" />
+    <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
+    <param name="shelf_model_name" value="$(arg shelf_model_name)" />
+    <param name="shelf_pose_fallback_x" value="$(arg shelf_pose_fallback_x)" />
+    <param name="shelf_pose_fallback_y" value="$(arg shelf_pose_fallback_y)" />
+    <param name="shelf_pose_fallback_z" value="$(arg shelf_pose_fallback_z)" />
+    <param name="shelf_pose_fallback_yaw" value="$(arg shelf_pose_fallback_yaw)" />
     <param name="figure_output_dir" value="$(arg figure_output_dir)" />
     <param name="save_task_keyframes" value="$(arg save_task_keyframes)" />
+    <param name="object_front_depth_percentile" value="$(arg object_front_depth_percentile)" />
+    <param name="object_depth_gate_band" value="$(arg object_depth_gate_band)" />
+    <param name="background_min_depth" value="$(arg background_min_depth)" />
+    <param name="object_clearance_margin_x" value="$(arg object_clearance_margin_x)" />
+    <param name="object_clearance_margin_y" value="$(arg object_clearance_margin_y)" />
+    <param name="object_clearance_margin_z" value="$(arg object_clearance_margin_z)" />
+    <param name="center_penalty_weight" value="$(arg center_penalty_weight)" />
+    <param name="front_alignment_weight" value="$(arg front_alignment_weight)" />
+    <param name="enable_width_filter" value="$(arg enable_width_filter)" />
+    <param name="gripper_width_max" value="$(arg gripper_width_max)" />
+    <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
     <param name="pre_grasp_back_distance" value="$(arg pre_grasp_back_distance)" />
+    <rosparam param="pre_grasp_back_distance_candidates" subst_value="True">$(arg pre_grasp_back_distance_candidates)</rosparam>
     <param name="wrist_observation_backoff" value="$(arg wrist_observation_backoff)" />
     <param name="wrist_depth_band" value="$(arg wrist_depth_band)" />
     <param name="wrist_front_depth_percentile" value="$(arg wrist_front_depth_percentile)" />
     <param name="insert_extra_depth_min" value="$(arg insert_extra_depth_min)" />
     <param name="insert_depth_margin" value="$(arg insert_depth_margin)" />
     <param name="insert_extra_depth_max" value="$(arg insert_extra_depth_max)" />
+    <param name="wrist_visibility_margin_px" value="$(arg wrist_visibility_margin_px)" />
+    <param name="wrist_require_full_visibility" value="$(arg wrist_require_full_visibility)" />
+    <param name="wrist_min_insert_fraction" value="$(arg wrist_min_insert_fraction)" />
+    <param name="use_iterative_wrist_alignment" value="$(arg use_iterative_wrist_alignment)" />
+    <param name="wrist_alignment_max_iters" value="$(arg wrist_alignment_max_iters)" />
+    <param name="use_final_wrist_alignment" value="$(arg use_final_wrist_alignment)" />
+    <param name="wrist_alignment_allow_vertical" value="$(arg wrist_alignment_allow_vertical)" />
+    <param name="use_wrist_guided_insert_distance" value="$(arg use_wrist_guided_insert_distance)" />
+    <param name="wrist_extra_insert_max" value="$(arg wrist_extra_insert_max)" />
+    <param name="wrist_alignment_tol" value="$(arg wrist_alignment_tol)" />
+    <param name="wrist_grasp_depth_margin" value="$(arg wrist_grasp_depth_margin)" />
+    <param name="wrist_grasp_forward_min" value="$(arg wrist_grasp_forward_min)" />
+    <param name="wrist_grasp_forward_max" value="$(arg wrist_grasp_forward_max)" />
+    <param name="refresh_collision_before_pick" value="$(arg refresh_collision_before_pick)" />
+    <param name="grasp_corridor_padding" value="$(arg grasp_corridor_padding)" />
+    <param name="enable_gazebo_attach" value="$(arg enable_gazebo_attach)" />
+    <param name="gazebo_attach_distance_threshold" value="$(arg gazebo_attach_distance_threshold)" />
+    <param name="gazebo_attach_link_name" value="$(arg gazebo_attach_link_name)" />
+    <param name="transport_step_size" value="$(arg transport_step_size)" />
+    <param name="insert_step_size" value="$(arg insert_step_size)" />
+    <param name="retreat_step_size" value="$(arg retreat_step_size)" />
+    <param name="lift_step_size" value="$(arg lift_step_size)" />
+    <param name="use_pose_preserving_transport" value="$(arg use_pose_preserving_transport)" />
+    <param name="place_hover_height" value="$(arg place_hover_height)" />
+    <param name="place_release_height_offset" value="$(arg place_release_height_offset)" />
+    <param name="place_orientation_mode" value="$(arg place_orientation_mode)" />
+    <param name="place_allow_position_only_fallback" value="$(arg place_allow_position_only_fallback)" />
+    <param name="simple_place_drop" value="$(arg simple_place_drop)" />
+    <rosparam param="grasp_roll_variants" subst_value="True">$(arg grasp_roll_variants)</rosparam>
+    <param name="grasp_force" value="$(arg grasp_force)" />
+    <param name="grasp_width_margin" value="$(arg grasp_width_margin)" />
+    <param name="grasp_command_width_min" value="$(arg grasp_command_width_min)" />
+    <param name="grasp_command_width_max" value="$(arg grasp_command_width_max)" />
+    <param name="grasp_epsilon_inner" value="$(arg grasp_epsilon_inner)" />
+    <param name="grasp_epsilon_outer" value="$(arg grasp_epsilon_outer)" />
+    <param name="grasp_timeout_sec" value="$(arg grasp_timeout_sec)" />
+    <param name="soft_grasp_width_tolerance" value="$(arg soft_grasp_width_tolerance)" />
+    <param name="soft_grasp_min_width" value="$(arg soft_grasp_min_width)" />
+    <param name="soft_grasp_max_width" value="$(arg soft_grasp_max_width)" />
+    <param name="refresh_collision_after_each_place" value="$(arg refresh_collision_after_each_place)" />
   </node>
 
   <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
         launch-prefix="/usr/bin/python3">
+    <param name="pose_topic" value="$(arg scheduler_pose_topic)" />
+    <param name="info_topic" value="$(arg scheduler_info_topic)" />
+    <param name="fallback_pose_topic" value="$(arg fallback_pose_topic)" />
+    <param name="fallback_info_topic" value="$(arg fallback_info_topic)" />
+    <param name="fallback_timeout_sec" value="$(arg fallback_timeout_sec)" />
+    <param name="semantic_weight" value="$(arg semantic_weight)" />
   </node>
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
-        launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+
+  <node pkg="sam_perception" type="global_vlm_target_node.py" name="global_vlm_target_node" output="screen"
+        if="$(arg launch_global_vlm)"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+  </node>
+
+  <node pkg="sam_perception" type="semantic_reranker.py" name="semantic_reranker" output="screen"
+        if="$(arg launch_semantic_reranker)"
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
+    <param name="strict_width_filter" value="$(arg strict_width_filter)" />
+    <param name="gripper_width_max" value="$(arg gripper_width_max)" />
+    <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
   </node>
 
 

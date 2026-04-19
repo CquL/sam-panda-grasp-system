@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import re
 import rospy
 import moveit_commander
 import geometry_msgs.msg
 import tf.transformations as tft
 import actionlib
+from sensor_msgs.msg import JointState
 from franka_gripper.msg import (
     MoveAction, MoveGoal,
     GraspAction, GraspGoal, GraspEpsilon
@@ -217,6 +219,61 @@ class GripperActionController:
         self.move_client.wait_for_server()
         self.grasp_client.wait_for_server()
         rospy.loginfo("[GripperActionController] ✓ 已连接到 move / grasp action server")
+        self.grasp_epsilon_inner = float(rospy.get_param("~grasp_epsilon_inner", 0.020))
+        self.grasp_epsilon_outer = float(rospy.get_param("~grasp_epsilon_outer", 0.020))
+        self.grasp_timeout_sec = float(rospy.get_param("~grasp_timeout_sec", 4.0))
+        self.soft_grasp_width_tolerance = float(rospy.get_param("~soft_grasp_width_tolerance", 0.030))
+        self.soft_grasp_min_width = float(rospy.get_param("~soft_grasp_min_width", 0.035))
+        self.soft_grasp_max_width = float(rospy.get_param("~soft_grasp_max_width", 0.078))
+        self.latest_joint_state = None
+        self.last_grasp_was_soft_success = False
+        self.last_grasp_hard_success = False
+        self.last_observed_gripper_width = None
+        rospy.Subscriber("/joint_states", JointState, self.joint_state_cb, queue_size=10)
+
+    def joint_state_cb(self, msg):
+        self.latest_joint_state = msg
+
+    def get_current_gripper_width(self):
+        msg = self.latest_joint_state
+        if msg is None:
+            return None
+        pos_map = {}
+        try:
+            for name, pos in zip(msg.name, msg.position):
+                pos_map[name] = float(pos)
+        except Exception:
+            return None
+
+        left = pos_map.get("panda_finger_joint1")
+        right = pos_map.get("panda_finger_joint2")
+        if left is not None and right is not None:
+            return max(0.0, left + right)
+        if left is not None:
+            return max(0.0, 2.0 * left)
+        if right is not None:
+            return max(0.0, 2.0 * right)
+        return None
+
+    def extract_width_from_error(self, error_text):
+        if not error_text:
+            return None
+        match = re.search(r"but at\s+([0-9]*\.?[0-9]+)m", str(error_text))
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except Exception:
+            return None
+
+    def soft_grasp_succeeded(self, requested_width, observed_width=None):
+        current_width = observed_width if observed_width is not None else self.get_current_gripper_width()
+        if current_width is None:
+            return False, None
+        width_error = abs(float(current_width) - float(requested_width))
+        occupied = self.soft_grasp_min_width <= current_width <= self.soft_grasp_max_width
+        close_enough = width_error <= self.soft_grasp_width_tolerance
+        return bool(occupied and close_enough), float(current_width)
 
     def open(self, width=0.08, speed=0.1):
         """
@@ -237,6 +294,14 @@ class GripperActionController:
 
         result = self.move_client.get_result()
         rospy.loginfo(f"[GripperActionController] move 结果: {result}")
+        if result is None:
+            rospy.logwarn("[GripperActionController] move 未返回有效结果")
+            return False
+        if hasattr(result, "success") and not bool(result.success):
+            rospy.logwarn(
+                f"[GripperActionController] move 动作执行完成，但夹爪未成功张开到目标宽度: error={getattr(result, 'error', '')}"
+            )
+            return False
         return True
 
     def close(self, width=0.033, speed=0.05, force=40.0):
@@ -249,6 +314,9 @@ class GripperActionController:
             f"[GripperActionController] grasp: width={width:.3f}, "
             f"speed={speed:.3f}, force={force:.1f}"
         )
+        self.last_grasp_was_soft_success = False
+        self.last_grasp_hard_success = False
+        self.last_observed_gripper_width = None
 
         goal = GraspGoal()
         goal.width = width
@@ -256,18 +324,52 @@ class GripperActionController:
         goal.force = force
 
         eps = GraspEpsilon()
-        eps.inner = 0.1   # 放宽一点容差
-        eps.outer = 0.05
+        eps.inner = self.grasp_epsilon_inner
+        eps.outer = self.grasp_epsilon_outer
         goal.epsilon = eps
 
         self.grasp_client.send_goal(goal)
-        finished = self.grasp_client.wait_for_result(rospy.Duration(10.0))
+        finished = self.grasp_client.wait_for_result(rospy.Duration(self.grasp_timeout_sec))
 
         if not finished:
+            soft_ok, current_width = self.soft_grasp_succeeded(width)
+            self.last_observed_gripper_width = current_width
+            if soft_ok:
+                self.last_grasp_was_soft_success = True
+                rospy.logwarn(
+                    f"[GripperActionController] grasp 超时，但当前夹爪宽度 {current_width:.3f} m "
+                    f"接近目标宽度 {width:.3f} m，按软成功处理并保留当前夹爪状态。"
+                )
+                return True
+            self.grasp_client.cancel_goal()
             rospy.logwarn("[GripperActionController] grasp 超时")
             return False
 
         result = self.grasp_client.get_result()
         rospy.loginfo(f"[GripperActionController] grasp 结果: {result}")
-        # result 里通常有一个 success 字段，你可以按需要再细化
+        if result is None:
+            rospy.logwarn("[GripperActionController] grasp 未返回有效结果")
+            return False
+
+        if hasattr(result, "success") and bool(result.success):
+            self.last_grasp_hard_success = True
+            self.last_observed_gripper_width = self.get_current_gripper_width()
+            return True
+
+        if hasattr(result, "success") and not bool(result.success):
+            observed_width = self.extract_width_from_error(getattr(result, "error", ""))
+            soft_ok, current_width = self.soft_grasp_succeeded(width, observed_width=observed_width)
+            self.last_observed_gripper_width = current_width
+            if soft_ok:
+                self.last_grasp_was_soft_success = True
+                rospy.logwarn(
+                    f"[GripperActionController] grasp 返回失败，但当前夹爪宽度 {current_width:.3f} m "
+                    f"接近目标宽度 {width:.3f} m，按软成功处理。"
+                )
+                return True
+            rospy.logwarn(
+                f"[GripperActionController] grasp 动作执行完成，但未形成稳定抓取: error={getattr(result, 'error', '')}"
+            )
+            return False
+
         return True

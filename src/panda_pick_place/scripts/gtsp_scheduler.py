@@ -4,11 +4,11 @@
 import sys
 import json
 import time
+import threading
 import rospy
 import numpy as np
 from geometry_msgs.msg import PoseArray, PoseStamped, Pose
 from std_msgs.msg import Float32MultiArray, String
-from sklearn.cluster import DBSCAN
 from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import PositionIKRequest
 import moveit_commander
@@ -46,13 +46,31 @@ class GTSPScheduler:
         # 内部任务队列与状态
         self.task_queue = [] 
         self.is_executing = False
-        self.raw_poses = None
-        self.raw_infos = None
+        self.primary_pose_msg = None
+        self.primary_info_msg = None
+        self.fallback_pose_msg = None
+        self.fallback_info_msg = None
+        self.fallback_timer = None
+        self.processing_schedule = False
+        self.schedule_lock = threading.Lock()
         self.current_run_metrics = None
+        self.pose_topic = rospy.get_param('~pose_topic', '/graspnet/grasp_pose_array_raw')
+        self.info_topic = rospy.get_param('~info_topic', '/graspnet/grasp_info_raw')
+        self.fallback_pose_topic = rospy.get_param('~fallback_pose_topic', '/graspnet/grasp_pose_array_raw')
+        self.fallback_info_topic = rospy.get_param('~fallback_info_topic', '/graspnet/grasp_info_raw')
+        self.fallback_timeout_sec = float(rospy.get_param('~fallback_timeout_sec', 1.5))
+        self.enable_fallback = bool(
+            rospy.get_param('~enable_fallback', False if 'semantic' in self.pose_topic else True)
+        )
+        self.semantic_weight = float(rospy.get_param('~semantic_weight', 0.0))
 
-        # 3. 订阅 GraspNet 的“原始”姿态数据
-        rospy.Subscriber('/graspnet/grasp_pose_array_raw', PoseArray, self.pose_cb)
-        rospy.Subscriber('/graspnet/grasp_info_raw', Float32MultiArray, self.info_cb)
+        # 3. 订阅主抓取候选话题，并在需要时订阅 raw 兜底话题
+        rospy.Subscriber(self.pose_topic, PoseArray, self.pose_cb)
+        rospy.Subscriber(self.info_topic, Float32MultiArray, self.info_cb)
+        if self.enable_fallback and self.fallback_pose_topic != self.pose_topic:
+            rospy.Subscriber(self.fallback_pose_topic, PoseArray, self.fallback_pose_cb)
+        if self.enable_fallback and self.fallback_info_topic != self.info_topic:
+            rospy.Subscriber(self.fallback_info_topic, Float32MultiArray, self.fallback_info_cb)
         
         # 4. 订阅底层执行器 (demo.py) 的状态反馈
         rospy.Subscriber('/demo/task_status', String, self.status_cb)
@@ -63,20 +81,111 @@ class GTSPScheduler:
         self.pub_demo_cmd = rospy.Publisher('/demo/command', String, queue_size=1)
         self.pub_schedule_metrics = rospy.Publisher('/scheduler/run_metrics', String, queue_size=10)
 
-        rospy.loginfo("🚀 多目标 GTSP 任务调度中枢已全面启动并待命！")
+        rospy.loginfo(
+            "🚀 多目标 GTSP 任务调度中枢已全面启动并待命！pose_topic=%s info_topic=%s fallback=(%s,%s) semantic_weight=%.3f",
+            self.pose_topic,
+            self.info_topic,
+            self.fallback_pose_topic,
+            self.fallback_info_topic,
+            self.semantic_weight,
+        )
 
 # ==========================================
     # 💥 修改后：双重触发机制，彻底解决异步卡死！
     # ==========================================
     def pose_cb(self, msg):
-        if self.is_executing: return
-        self.raw_poses = msg
-        self.process_and_schedule() # 💥 新增：拿到姿态后，也试着去触发一下
+        if self.is_executing:
+            return
+        self.primary_pose_msg = msg
+        self.try_process_primary()
 
     def info_cb(self, msg):
-        if self.is_executing: return
-        self.raw_infos = msg.data
-        self.process_and_schedule() # 拿到信息后，也试着去触发一下
+        if self.is_executing:
+            return
+        self.primary_info_msg = msg.data
+        self.try_process_primary()
+
+    def fallback_pose_cb(self, msg):
+        if self.is_executing:
+            return
+        self.fallback_pose_msg = msg
+        self.maybe_arm_fallback_timer()
+
+    def fallback_info_cb(self, msg):
+        if self.is_executing:
+            return
+        self.fallback_info_msg = msg.data
+        self.maybe_arm_fallback_timer()
+
+    def cancel_fallback_timer(self):
+        if self.fallback_timer is not None:
+            self.fallback_timer.shutdown()
+            self.fallback_timer = None
+
+    def try_process_primary(self):
+        self.cancel_fallback_timer()
+        if self.is_executing or self.processing_schedule:
+            return
+        if self.primary_pose_msg is None or self.primary_info_msg is None:
+            self.maybe_arm_fallback_timer()
+            return
+        if not self.schedule_lock.acquire(blocking=False):
+            return
+        self.processing_schedule = True
+        pose_msg = self.primary_pose_msg
+        info_values = list(self.primary_info_msg)
+        self.primary_pose_msg = None
+        self.primary_info_msg = None
+        try:
+            self.process_and_schedule(pose_msg, info_values, candidate_source="primary")
+        finally:
+            self.processing_schedule = False
+            self.schedule_lock.release()
+
+    def maybe_arm_fallback_timer(self):
+        if self.is_executing or self.processing_schedule:
+            return
+        if not self.enable_fallback:
+            return
+        if self.pose_topic == self.fallback_pose_topic and self.info_topic == self.fallback_info_topic:
+            return
+        if self.primary_pose_msg is not None and self.primary_info_msg is not None:
+            return
+        if self.fallback_pose_msg is None or self.fallback_info_msg is None:
+            return
+        if self.fallback_timer is None:
+            self.fallback_timer = rospy.Timer(
+                rospy.Duration(self.fallback_timeout_sec),
+                self.fallback_timer_cb,
+                oneshot=True,
+            )
+
+    def fallback_timer_cb(self, _event):
+        self.fallback_timer = None
+        if self.is_executing or self.processing_schedule:
+            return
+        if self.primary_pose_msg is not None and self.primary_info_msg is not None:
+            return
+        if self.fallback_pose_msg is None or self.fallback_info_msg is None:
+            return
+        if not self.schedule_lock.acquire(blocking=False):
+            return
+        self.processing_schedule = True
+        rospy.logwarn(
+            "⚠️ 主候选话题在 %.2f s 内未成对到达，回退使用 raw 抓取候选继续调度。",
+            self.fallback_timeout_sec,
+        )
+        pose_msg = self.fallback_pose_msg
+        info_values = list(self.fallback_info_msg)
+        self.fallback_pose_msg = None
+        self.fallback_info_msg = None
+        self.primary_pose_msg = None
+        self.primary_info_msg = None
+        try:
+            self.process_and_schedule(pose_msg, info_values, candidate_source="fallback")
+        finally:
+            self.processing_schedule = False
+            self.schedule_lock.release()
         
     def status_cb(self, msg):
         status = msg.data
@@ -91,13 +200,13 @@ class GTSPScheduler:
             rospy.loginfo(f"📥 收到执行器反馈: {status}，准备派发下一个任务。")
             self.dispatch_next_task()
 
-    def get_ik(self, pose):
+    def get_ik(self, pose, frame_id):
         """调用 MoveIt 服务计算真实关节角 (Inverse Kinematics)"""
         req = PositionIKRequest()
         req.group_name = "panda_manipulator"
         req.robot_state = self.robot.get_current_state()
         req.pose_stamped = PoseStamped()
-        req.pose_stamped.header.frame_id = self.raw_poses.header.frame_id
+        req.pose_stamped.header.frame_id = frame_id
         req.pose_stamped.pose = pose
         req.timeout = rospy.Duration(0.1)
         
@@ -106,96 +215,70 @@ class GTSPScheduler:
             return list(res.solution.joint_state.position[:7])
         return None
 
-    def process_and_schedule(self):
-        if not self.raw_poses or not self.raw_infos: return
+    def adjust_transition_cost(self, joint_cost, semantic_score=0.0):
+        semantic_score = max(0.0, float(semantic_score))
+        if self.semantic_weight <= 1e-9 or semantic_score <= 1e-9:
+            return float(joint_cost)
+        return float(joint_cost / (1.0 + self.semantic_weight * semantic_score))
+
+    def process_and_schedule(self, pose_msg, info_values, candidate_source="primary"):
+        if pose_msg is None or info_values is None:
+            return
         schedule_start_wall = time.time()
         rospy.loginfo("="*50)
-        rospy.loginfo("🧠 [阶段 1] 开始多目标 GTSP 调度规划...")
+        rospy.loginfo(f"🧠 [阶段 1] 开始多目标 GTSP 调度规划... (source={candidate_source})")
         
-        num_poses = len(self.raw_poses.poses)
-        info_stride = int(len(self.raw_infos) / num_poses) if num_poses > 0 and len(self.raw_infos) % num_poses == 0 else 0
-        use_object_ids = info_stride >= 4
+        num_poses = len(pose_msg.poses)
+        info_stride = int(len(info_values) / num_poses) if num_poses > 0 and len(info_values) % num_poses == 0 else 0
+        if info_stride < 4:
+            rospy.logerr(
+                "❌ 当前调度器要求 grasp_info 至少包含 [object_id, width, score, depth]。"
+                "收到长度=%d, num_poses=%d, info_stride=%d。请检查上游 grasp_from_sam / semantic_reranker 输出。",
+                len(info_values),
+                num_poses,
+                info_stride,
+            )
+            return
 
-        if use_object_ids:
-            labels = np.array([int(self.raw_infos[i * info_stride]) for i in range(num_poses)], dtype=np.int32)
-            unique_labels = sorted(set(labels.tolist()))
-            rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇（直接使用 object_id 分组）。")
-        else:
-            # ---------------------------------------------------------
-            # 聚类模块: 使用 DBSCAN 区分不同的物体簇
-            # ---------------------------------------------------------
-            positions = [[p.position.x, p.position.y, p.position.z] for p in self.raw_poses.poses]
-            X = np.array(positions)
-            # =======================================================
-            # 💥 工业级“空间拉伸”黑科技：防止跨层货架误连
-            # =======================================================
-            X_scaled = np.copy(X)
-            # 将所有抓取点的 Z 轴坐标放大 3 倍（XY 保持不变）
-            # 这样物理上相差 5cm 的跨层间隙，在算法眼里就变成了 15cm 的鸿沟！
-            X_scaled[:, 2] *= 3.0 
-            
-            clustering = DBSCAN(eps=0.08, min_samples=2).fit(X_scaled)
-            labels = clustering.labels_
-            unique_labels = set(labels) - {-1} # 剔除离群噪点
-                
-            if len(unique_labels) == 0:
-                rospy.logwarn("未能形成有效的目标簇！")
-                self.raw_poses = None; self.raw_infos = None
-                return
-                
-            rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇。")
-        # =========================================================
-        # 💥 新增：使用 Open3D 3D球体可视化聚类结果
-        # =========================================================
-        # try:
-        #     import open3d as o3d
-        #     rospy.loginfo("👀 正在打开 Open3D 窗口显示【抓取姿态聚类分布】...")
-        #     rospy.loginfo("💡 提示：不同颜色的球体代表不同的物体，灰色代表被舍弃的孤立噪点。")
-        #     rospy.loginfo("⚠️ 请手动关闭 3D 弹窗，以便调度器继续执行遗传算法！")
-            
-        #     # 为每个独立的簇随机分配一种明亮的颜色
-        #     color_map = {label: [random.random(), random.random(), random.random()] for label in unique_labels}
-        #     color_map[-1] = [0.5, 0.5, 0.5]  # -1 代表离群噪点，统一涂成灰色
-            
-        #     geometries = []
-        #     # 在原点添加一个世界坐标系 (XYZ 分别对应红绿蓝，大小 0.1 米)
-        #     frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-        #     geometries.append(frame)
-            
-        #     # 为每一个抓取坐标生成一个半径为 5 毫米的 3D 小球
-        #     for i, pos in enumerate(X):
-        #         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.005)
-        #         sphere.translate(pos)
-        #         sphere.paint_uniform_color(color_map[labels[i]])
-        #         geometries.append(sphere)
-                
-        #     # 渲染并阻塞，直到用户手动关闭窗口
-        #     o3d.visualization.draw_geometries(geometries, window_name="DBSCAN Grasp Clustering (Close to continue)")
-        # except ImportError:
-        #     rospy.logwarn("未安装 open3d 库，跳过聚类可视化。")
-        # =========================================================
+        labels = np.array([int(info_values[i * info_stride]) for i in range(num_poses)], dtype=np.int32)
+        unique_labels = sorted(set(labels.tolist()))
+        rospy.loginfo(f"📊 发现 {len(unique_labels)} 个独立物体目标簇（基于 object_id 显式分组）。")
         # ---------------------------------------------------------
         # IK 过滤模块: 提前剔除机械臂够不到的姿态
         # ---------------------------------------------------------
         clusters_data = {cid: [] for cid in unique_labels}
+        raw_cluster_sizes = {cid: 0 for cid in unique_labels}
         for i, label in enumerate(labels):
-            if not use_object_ids and label == -1:
-                continue
-            pose = self.raw_poses.poses[i]
-            if use_object_ids:
-                info = self.raw_infos[i * info_stride + 1 : i * info_stride + 4]
-            else:
-                info = self.raw_infos[i*3 : i*3+3]
+            raw_cluster_sizes[label] += 1
+            pose = pose_msg.poses[i]
+            semantic_score = 0.0
+            base = i * info_stride
+            info = info_values[base + 1 : base + 4]
+            if info_stride >= 5 and (base + 4) < len(info_values):
+                semantic_score = float(info_values[base + 4])
             
-            q = self.get_ik(pose)
+            q = self.get_ik(pose, pose_msg.header.frame_id)
             if q is not None:
-                clusters_data[label].append((pose, info, q))
-                
+                clusters_data[label].append((pose, info, q, semantic_score))
+
+        for cid in unique_labels:
+            rospy.loginfo(
+                "  ↳ 目标簇 %s: 原始候选 %d 个, IK 可达 %d 个",
+                str(cid),
+                int(raw_cluster_sizes.get(cid, 0)),
+                int(len(clusters_data.get(cid, []))),
+            )
+
         valid_clusters = {cid: data for cid, data in clusters_data.items() if len(data) > 0}
+        dropped_clusters = [cid for cid in unique_labels if len(clusters_data.get(cid, [])) == 0]
+        if dropped_clusters:
+            rospy.logwarn(
+                "⚠️ 以下目标簇在调度前被 IK/可达性过滤完全剔除: %s",
+                ", ".join(str(cid) for cid in dropped_clusters),
+            )
         
         if not valid_clusters:
             rospy.logwarn("所有生成的姿态均超出机械臂工作空间限制！")
-            self.raw_poses = None; self.raw_infos = None
             return
 
         # ---------------------------------------------------------
@@ -211,15 +294,17 @@ class GTSPScheduler:
         # 将最优序列转化为任务队列
         self.task_queue = []
         for cid, pose_idx in best_sequence:
-            pose, info, q = valid_clusters[cid][pose_idx]
+            pose, info, q, _semantic_score = valid_clusters[cid][pose_idx]
             self.task_queue.append((pose, info, q))
 
         metrics = {
             "task_count": len(self.task_queue),
             "cluster_count": len(valid_clusters),
-            "candidate_pose_count": len(self.raw_poses.poses),
+            "candidate_pose_count": len(pose_msg.poses),
             "joint_cost_rad": float(total_joint_cost),
             "scheduler_time_sec": float(scheduler_time_sec),
+            "semantic_weight": float(self.semantic_weight),
+            "candidate_source": str(candidate_source),
             "run_start_sim_time": rospy.Time.now().to_sec(),
             "done_count": 0,
             "failed_count": 0,
@@ -232,11 +317,11 @@ class GTSPScheduler:
         self.is_executing = True
 
         # 💥 修复 1：把 header 提前存下来，再分发指令！
-        self.saved_header = self.raw_poses.header
+        self.saved_header = pose_msg.header
 
         self.dispatch_next_task()
-        
-        self.raw_poses = None; self.raw_infos = None
+        self.fallback_pose_msg = None
+        self.fallback_info_msg = None
 
     def run_genetic_algorithm(self, clusters, start_joints):
         """核心算法：基于遗传算法的 GTSP 路径规划"""
@@ -263,8 +348,10 @@ class GTSPScheduler:
             for cid in seq:
                 pose_idx = choices[cid]
                 target_q = clusters[cid][pose_idx][2]
+                semantic_score = clusters[cid][pose_idx][3] if len(clusters[cid][pose_idx]) > 3 else 0.0
                 # 切比雪夫距离：取转动幅度最大的那个关节作为该动作的耗时代价
                 cost = np.max(np.abs(np.array(target_q) - np.array(curr_q)))
+                cost = self.adjust_transition_cost(cost, semantic_score)
                 total_cost += cost
                 curr_q = target_q
             return total_cost
@@ -314,7 +401,9 @@ class GTSPScheduler:
         curr_q = start_joints
         for cid, pose_idx in best_sequence:
             target_q = clusters[cid][pose_idx][2]
-            total_cost += float(np.max(np.abs(np.array(target_q) - np.array(curr_q))))
+            semantic_score = clusters[cid][pose_idx][3] if len(clusters[cid][pose_idx]) > 3 else 0.0
+            joint_cost = float(np.max(np.abs(np.array(target_q) - np.array(curr_q))))
+            total_cost += self.adjust_transition_cost(joint_cost, semantic_score)
             curr_q = target_q
         return total_cost
 

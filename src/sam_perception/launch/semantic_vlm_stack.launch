@@ -1,0 +1,13 @@
+<launch>
+  <include file="$(find sam_perception)/launch/system_new.launch">
+    <arg name="launch_demo" value="true" />
+    <arg name="launch_scheduler" value="true" />
+    <arg name="launch_wrist_vlm" value="true" />
+    <arg name="launch_global_vlm" value="true" />
+    <arg name="launch_semantic_reranker" value="true" />
+    <arg name="scheduler_pose_topic" value="/graspnet/grasp_pose_array_semantic" />
+    <arg name="scheduler_info_topic" value="/graspnet/grasp_info_semantic" />
+    <arg name="enable_scheduler_fallback" value="false" />
+    <arg name="semantic_weight" value="0.35" />
+  </include>
+</launch>

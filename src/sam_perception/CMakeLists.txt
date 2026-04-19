@@ -9,6 +9,7 @@ project(sam_perception)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   cv_bridge
+  geometry_msgs
   rospy
   sensor_msgs
   std_msgs
@@ -160,10 +161,17 @@ include_directories(
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-# catkin_install_python(PROGRAMS
-#   scripts/my_python_script
-#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+catkin_install_python(PROGRAMS
+  scripts/experiment_logger.py
+  scripts/global_vlm_target_node.py
+  scripts/grasp_from_sam.py
+  scripts/llm_planner.py
+  scripts/sam_node.py
+  scripts/semantic_reranker.py
+  scripts/task_command_cli.py
+  scripts/wrist_vlm_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark executables for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html

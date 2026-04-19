@@ -7,7 +7,7 @@
 
   <node pkg="tf" type="static_transform_publisher"
       name="depth_camera_tf"
-      args="0.213036 -0.009588 0.532843 0 0 -1.57 world depth_camera_link 100" >
+      args="0.158364 -0.133043 0.555751 0 0 -1.57 world depth_camera_link 100" >
   </node>
 
 

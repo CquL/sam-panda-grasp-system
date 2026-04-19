@@ -1,0 +1,42 @@
+<mxfile host="app.diagrams.net" modified="2026-04-12T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="fig53" name="Fig5.3 Semantic Rerank">
+    <mxGraphModel dx="1280" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="0" arrows="0" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="图5.3 VLM语义重排的候选评审过程示例" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontStyle=1;fontSize=22;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="250" y="20" width="700" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="left_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#d9d9d9;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="50" y="70" width="500" height="470" as="geometry"/>
+        </mxCell>
+        <mxCell id="left_header" value="候选姿态裁剪图（语义重排输入）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontStyle=1;fontSize=18;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="75" y="90" width="300" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="left_image_box" value="将图片拖入此区域：&#xa;/home/lhj/grasp_robot_ws/semantic_rerank_debug/semantic_object_0_20260412_131357.png&#xa;&#xa;图中应保留：&#xa;1. 候选编号 C1 / C2 / C3&#xa;2. 接近方向箭头&#xa;3. 目标局部 RGB 裁剪图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bdbdbd;strokeWidth=2;dashed=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="75" y="130" width="450" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="left_note" value="候选结构化信息（示例）&#xa;C1: width=0.067m, raw_score=0.856, center_offset=5.7px&#xa;C2: width=0.071m, raw_score=0.839, center_offset=4.1px&#xa;C3: width=0.069m, raw_score=0.797, center_offset=11.7px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef6ff;strokeColor=#99c2ff;strokeWidth=1;align=left;verticalAlign=middle;fontSize=14;fontColor=#23436b;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="75" y="445" width="450" height="75" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="right_panel" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f7f7;strokeColor=#d9d9d9;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="600" y="70" width="520" height="470" as="geometry"/>
+        </mxCell>
+        <mxCell id="right_header" value="Qwen-VL-Max 语义评审结果" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontStyle=1;fontSize=18;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="625" y="90" width="280" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="json_box" value="{&#xa;  &quot;object_id&quot;: 0,&#xa;  &quot;best_candidate&quot;: 1,&#xa;  &quot;preferred_region&quot;: &quot;bottle_body&quot;,&#xa;  &quot;avoid_region&quot;: &quot;cap_or_occluded_edge&quot;,&#xa;  &quot;grasp_side&quot;: &quot;front&quot;,&#xa;  &quot;semantic_scores&quot;: {&#xa;    &quot;C1&quot;: 0.40,&#xa;    &quot;C2&quot;: 0.90,&#xa;    &quot;C3&quot;: 0.20&#xa;  },&#xa;  &quot;reason&quot;: &quot;C2 更居中，宽度满足约束，且位于主体区域，更适合稳定抓取并从货架中抽取商品。&quot;&#xa;}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1f2233;strokeColor=#1f2233;fontSize=14;fontColor=#dce8ff;fontFamily=Courier New;align=left;verticalAlign=top;spacing=14;" vertex="1" parent="1">
+          <mxGeometry x="625" y="130" width="470" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="decision_box" value="VLM 评审结论&#xa;&#xa;最优候选：C2&#xa;优先区域：bottle_body&#xa;避开区域：cap_or_occluded_edge&#xa;抓取方向：front&#xa;&#xa;核心理由：&#xa;1. C2 的夹爪宽度 0.071m 满足宽度约束；&#xa;2. C2 的中心偏移最小（4.1px），与目标主体对准度最高；&#xa;3. 抓取位置位于罐身主体区域，避免了边缘与瓶口，适合从货架中平稳抽出。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bdbdbd;strokeWidth=1;align=left;verticalAlign=top;fontSize=15;fontColor=#333333;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="625" y="395" width="470" height="125" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="caption" value="左侧展示局部 RGB 裁剪图中 3 个候选抓取姿态的编号与接近方向；右侧展示 Qwen-VL-Max 返回的语义评分与决策理由，最终选择 C2 作为语义最优抓取姿态。" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=16;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="120" y="555" width="930" height="45" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

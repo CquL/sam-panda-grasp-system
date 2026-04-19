@@ -1,6 +1,5 @@
   <!-- 启动环境 加载gazebo世界，rviz，打开graspnet，yolo -->
 <launch>
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
   <include file="$(find panda_moveit_config)/launch/demo_gazebo_supermarket.launch">
     <arg name="paused" value="false"/>
     <arg name="gazebo_gui" value="true"/>
@@ -11,7 +10,7 @@
       args="0.164000 -0.201491 0.493261 0 0 -1.57 world depth_camera_link 100" />
 
   <node pkg="yolov5_ros" type="detect.py" name="yolov5_detector" output="screen"
-          launch-prefix="$(arg anygrasp_python)">
+          launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
       <param name="weights" value="yolov5m.pt"/>
       <param name="data" value="$(find yolov5_ros)/src/yolov5/data/coco128.yaml"/>
       <param name="confidence_threshold" value="0.25"/>
@@ -32,7 +31,7 @@
   </node>
 
   <node pkg="grasp_detector_ros" type="grasp_inference_node.py" name="grasp_generator_node" output="screen"
-        launch-prefix="$(arg anygrasp_python)">
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
   </node>
 
 </launch>

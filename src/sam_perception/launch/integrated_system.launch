@@ -1,5 +1,4 @@
 <launch>
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
 
   <include file="$(find panda_moveit_config)/launch/demo_gazebo_supermarket.launch">
     <arg name="paused" value="false"/>
@@ -8,16 +7,16 @@
 
   <node pkg="tf" type="static_transform_publisher"
       name="depth_camera_tf"
-      args="0.182005 -0.184616 0.448087 0 0 -1.57 world depth_camera_link 100" >
+      args="0.158364 -0.133043 0.555751 0 0 -1.57 world depth_camera_link 100" >
   </node>
 
   <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
-        launch-prefix="$(arg anygrasp_python)">
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
         <param name="model_type" value="vit_b" />
   </node>
 
   <node pkg="sam_perception" type="sam_node.py" name="sam_perception_node" output="screen"
-        launch-prefix="$(arg anygrasp_python)">
+        launch-prefix="env LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7 /home/lhj/anaconda3/envs/anygrasp_env/bin/python">
         <param name="model_type" value="vit_b" />
   </node>
 

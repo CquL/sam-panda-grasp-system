@@ -23,6 +23,7 @@ class ExperimentLogger:
         "done_count",
         "failed_count",
         "failed_by_user_count",
+        "tsr",
         "gsr",
         "tct_sec",
         "cartesian_success_count",
@@ -33,6 +34,8 @@ class ExperimentLogger:
         "scheduler_time_sec",
         "cluster_count",
         "candidate_pose_count",
+        "failure_stage",
+        "failure_reason",
     ]
 
     def __init__(self):
@@ -58,6 +61,7 @@ class ExperimentLogger:
 
         rospy.Subscriber("/graspnet/grasp_pose_array", PoseArray, self.dispatch_cb, queue_size=10)
         rospy.Subscriber("/demo/task_status", String, self.status_cb, queue_size=50)
+        rospy.Subscriber("/demo/failure_reason", String, self.failure_reason_cb, queue_size=50)
         rospy.Subscriber("/demo/command", String, self.command_cb, queue_size=10)
         rospy.Subscriber("/demo/cartesian_plan_fraction", Float32, self.fraction_cb, queue_size=200)
         rospy.Subscriber("/scheduler/run_metrics", String, self.scheduler_metrics_cb, queue_size=20)
@@ -98,6 +102,8 @@ class ExperimentLogger:
             "scheduler_time_sec": "",
             "cluster_count": "",
             "candidate_pose_count": "",
+            "failure_stage": "",
+            "failure_reason": "",
         }
         if self.pending_scheduler_metrics:
             self.current_run.update(self.pending_scheduler_metrics)
@@ -136,6 +142,19 @@ class ExperimentLogger:
             self.current_run["failed_count"] += 1
         elif status == "FAILED_BY_USER":
             self.current_run["failed_by_user_count"] += 1
+
+    def failure_reason_cb(self, msg):
+        if self.current_run is None:
+            return
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            self.current_run["failure_stage"] = "unknown"
+            self.current_run["failure_reason"] = msg.data.strip()
+            return
+
+        self.current_run["failure_stage"] = payload.get("stage", "")
+        self.current_run["failure_reason"] = payload.get("reason", "")
 
     def scheduler_metrics_cb(self, msg):
         try:
@@ -202,6 +221,7 @@ class ExperimentLogger:
             if cartesian_total_count > 0
             else 0.0
         )
+        tsr = 1.0 if (total_targets > 0 and done_count == total_targets and failed_count == 0 and failed_by_user_count == 0) else 0.0
 
         row = {
             "run_index": run["run_index"],
@@ -214,6 +234,7 @@ class ExperimentLogger:
             "done_count": done_count,
             "failed_count": failed_count,
             "failed_by_user_count": failed_by_user_count,
+            "tsr": f"{tsr:.4f}",
             "gsr": f"{gsr:.4f}",
             "tct_sec": f"{tct_sec:.3f}",
             "cartesian_success_count": cartesian_success_count,
@@ -228,6 +249,8 @@ class ExperimentLogger:
             ),
             "cluster_count": run["cluster_count"],
             "candidate_pose_count": run["candidate_pose_count"],
+            "failure_stage": run["failure_stage"],
+            "failure_reason": run["failure_reason"],
         }
 
         with open(self.output_file, "a", newline="", encoding="utf-8") as f:

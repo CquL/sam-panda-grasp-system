@@ -3,6 +3,7 @@
 
 import sys
 import copy
+import json
 import os
 import time
 import rospy
@@ -13,6 +14,8 @@ from std_msgs.msg import String, Float32
 from geometry_msgs.msg import PoseStamped, PoseArray, Pose, Vector3Stamped
 from std_msgs.msg import Float32MultiArray
 from sensor_msgs.msg import Image, CameraInfo
+from gazebo_msgs.srv import GetModelState, GetModelProperties
+from gazebo_msgs.msg import ModelStates
 from cv_bridge import CvBridge
 import tf2_ros
 import tf2_geometry_msgs
@@ -24,6 +27,7 @@ from std_srvs.srv import Empty
 
 try:
     from gazebo_interface import GazeboCubeManager
+    from gazebo_interface import GazeboLinkAttacher
     from motion_controller import ArmController, GripperActionController
 except ImportError:
     rospy.logwarn("无法导入自定义控制器，请确保相关文件在搜索路径中。")
@@ -55,18 +59,53 @@ class PickPlaceDemo:
 
         self.is_running_task = False
         self.stop_requested = False
+        self.last_failure_stage = ""
+        self.last_failure_reason = ""
         self.arm.move_group.set_planning_time(5.0)
         self.arm.move_group.set_goal_position_tolerance(0.01)
         self.arm.move_group.set_goal_orientation_tolerance(0.05)
         self.arm.move_group.set_goal_joint_tolerance(0.05)
+        self.arm.move_group.set_max_velocity_scaling_factor(0.30)
+        self.arm.move_group.set_max_acceleration_scaling_factor(0.25)
 
-        self.basket_x = 0.491457
-        self.basket_y = 0.005289
-        self.basket_z = 0.149970
+        self.basket_x = float(rospy.get_param("~basket_x", 0.393296))
+        self.basket_y = float(rospy.get_param("~basket_y", -0.315779))
+        self.basket_z = float(rospy.get_param("~basket_z", 0.140719))
         self.basket_size = (0.36, 0.26, 0.16)
         self.basket_wall_thickness = 0.01
+        self.use_basket_slot_grid = bool(rospy.get_param("~use_basket_slot_grid", False))
+        self.place_hover_height = float(rospy.get_param("~place_hover_height", 0.05))
+        self.place_release_height_offset = float(rospy.get_param("~place_release_height_offset", 0.02))
+        self.place_orientation_mode = str(rospy.get_param("~place_orientation_mode", "preserve")).strip().lower()
+        if self.place_orientation_mode not in ("preserve", "downward"):
+            rospy.logwarn(
+                f"⚠️ 未知的 place_orientation_mode={self.place_orientation_mode}，回退到 preserve。"
+            )
+            self.place_orientation_mode = "preserve"
+        self.place_allow_position_only_fallback = bool(
+            rospy.get_param("~place_allow_position_only_fallback", False)
+        )
+        self.use_fixed_shelf_collision = bool(rospy.get_param("~use_fixed_shelf_collision", True))
+        self.shelf_model_name = str(rospy.get_param("~shelf_model_name", "narrow_supermarket_shelf_enclosed_0"))
+        self.shelf_pose_fallback = {
+            "x": float(rospy.get_param("~shelf_pose_fallback_x", 0.737098)),
+            "y": float(rospy.get_param("~shelf_pose_fallback_y", -0.148598)),
+            "z": float(rospy.get_param("~shelf_pose_fallback_z", 0.205537)),
+            "yaw": float(rospy.get_param("~shelf_pose_fallback_yaw", 0.0)),
+        }
+        self.force_shelf_normal_approach = bool(rospy.get_param("~force_shelf_normal_approach", True))
+        self.execution_shelf_clearance_min = float(rospy.get_param("~execution_shelf_clearance_min", 0.025))
+        self.simple_front_grasp_mode = bool(rospy.get_param("~simple_front_grasp_mode", True))
+        self.enable_gazebo_attach = bool(rospy.get_param("~enable_gazebo_attach", False))
+        self.gazebo_attach_distance_threshold = float(rospy.get_param("~gazebo_attach_distance_threshold", 0.18))
+        self.gazebo_attach_link_name = str(rospy.get_param("~gazebo_attach_link_name", "panda_link8"))
         self.drop_counter = 0
         self.current_item_collision_size = None
+        self.last_grasp_width_hint = 0.04
+        self.last_grasp_depth_hint = 0.03
+        self.gazebo_model_states = None
+        self.attached_gazebo_model = None
+        self.attached_gazebo_link = None
 
         self.grasp_pose_array_received = None
         self.grasp_infos = []
@@ -83,12 +122,51 @@ class PickPlaceDemo:
         self.gripper_draw_half_width = rospy.get_param("~gripper_draw_half_width", 0.04)
         self.camera_frame = rospy.get_param("~camera_frame", "wrist_camera_optical_link")
         self.pre_grasp_back_distance = rospy.get_param("~pre_grasp_back_distance", 0.12)
+        self.pre_grasp_back_distance_candidates = [
+            float(v) for v in rospy.get_param("~pre_grasp_back_distance_candidates", [0.12, 0.15, 0.18])
+        ]
         self.wrist_observation_backoff = rospy.get_param("~wrist_observation_backoff", 0.04)
         self.wrist_depth_band = rospy.get_param("~wrist_depth_band", 0.05)
         self.wrist_front_depth_percentile = rospy.get_param("~wrist_front_depth_percentile", 20.0)
         self.insert_extra_depth_min = rospy.get_param("~insert_extra_depth_min", 0.06)
         self.insert_depth_margin = rospy.get_param("~insert_depth_margin", 0.035)
         self.insert_extra_depth_max = rospy.get_param("~insert_extra_depth_max", 0.09)
+        self.use_pose_preserving_transport = rospy.get_param("~use_pose_preserving_transport", False)
+        self.simple_place_drop = bool(rospy.get_param("~simple_place_drop", True))
+        self.refresh_collision_after_each_place = bool(
+            rospy.get_param("~refresh_collision_after_each_place", False)
+        )
+        self.transport_step_size = float(rospy.get_param("~transport_step_size", 0.025))
+        self.insert_step_size = float(rospy.get_param("~insert_step_size", 0.025))
+        self.retreat_step_size = float(rospy.get_param("~retreat_step_size", 0.025))
+        self.lift_step_size = float(rospy.get_param("~lift_step_size", 0.012))
+        self.grasp_force = float(rospy.get_param("~grasp_force", 50.0))
+        self.grasp_width_margin = float(rospy.get_param("~grasp_width_margin", 0.002))
+        self.grasp_command_width_min = float(rospy.get_param("~grasp_command_width_min", 0.010))
+        self.grasp_command_width_max = float(rospy.get_param("~grasp_command_width_max", 0.078))
+        self.grasp_width_margin_wide = float(rospy.get_param("~grasp_width_margin_wide", 0.001))
+        self.grasp_width_margin_wide_threshold = float(
+            rospy.get_param("~grasp_width_margin_wide_threshold", 0.068)
+        )
+        self.grasp_roll_variants = [
+            str(v) for v in rospy.get_param("~grasp_roll_variants", ["x_down"])
+        ]
+        self.use_iterative_wrist_alignment = bool(rospy.get_param("~use_iterative_wrist_alignment", False))
+        self.wrist_alignment_max_iters = int(rospy.get_param("~wrist_alignment_max_iters", 1))
+        self.use_wrist_guided_insert_distance = bool(rospy.get_param("~use_wrist_guided_insert_distance", False))
+        self.min_insert_distance = float(rospy.get_param("~min_insert_distance", 0.02))
+        self.wrist_visibility_margin_px = int(rospy.get_param("~wrist_visibility_margin_px", 8))
+        self.wrist_require_full_visibility = bool(rospy.get_param("~wrist_require_full_visibility", False))
+        self.wrist_min_insert_fraction = float(rospy.get_param("~wrist_min_insert_fraction", 0.45))
+        self.use_final_wrist_alignment = bool(rospy.get_param("~use_final_wrist_alignment", False))
+        self.wrist_alignment_allow_vertical = bool(rospy.get_param("~wrist_alignment_allow_vertical", False))
+        self.wrist_extra_insert_max = float(rospy.get_param("~wrist_extra_insert_max", 0.03))
+        self.wrist_alignment_tol = float(rospy.get_param("~wrist_alignment_tol", 0.008))
+        self.wrist_grasp_depth_margin = float(rospy.get_param("~wrist_grasp_depth_margin", 0.005))
+        self.wrist_grasp_forward_min = float(rospy.get_param("~wrist_grasp_forward_min", 0.03))
+        self.wrist_grasp_forward_max = float(rospy.get_param("~wrist_grasp_forward_max", 0.09))
+        self.refresh_collision_before_pick = bool(rospy.get_param("~refresh_collision_before_pick", True))
+        self.grasp_corridor_padding = float(rospy.get_param("~grasp_corridor_padding", 0.03))
         self.grasp_sub = rospy.Subscriber('/graspnet/grasp_pose_array', PoseArray, self.grasp_pose_callback)
         self.info_sub = rospy.Subscriber('/graspnet/grasp_info', Float32MultiArray, self.grasp_info_callback)
         self.cmd_sub = rospy.Subscriber('/demo/command', String, self.ui_command_callback)
@@ -99,14 +177,29 @@ class PickPlaceDemo:
         self.wrist_depth = None
         rospy.Subscriber('/wrist_camera/color/image_raw', Image, self.wrist_rgb_cb)
         rospy.Subscriber('/wrist_camera/depth/image_raw', Image, self.wrist_depth_cb)
+        rospy.Subscriber('/gazebo/model_states', ModelStates, self.gazebo_model_states_cb, queue_size=1)
 
         self.status_pub = rospy.Publisher('/demo/task_status', String, queue_size=10)
+        self.failure_reason_pub = rospy.Publisher('/demo/failure_reason', String, queue_size=10)
         self.cartesian_fraction_pub = rospy.Publisher('/demo/cartesian_plan_fraction', Float32, queue_size=50)
+        self.active_grasp_target_pub = rospy.Publisher('/sam_perception/active_grasp_target', String, queue_size=1, latch=True)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         rospy.wait_for_service('/compute_ik')
         self.compute_ik = rospy.ServiceProxy('/compute_ik', GetPositionIK)
         self.refresh_background = rospy.ServiceProxy('/sam_perception/refresh_background', Empty, persistent=True)
+        self.get_model_state = None
+        self.get_model_properties = None
+        try:
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=1.0)
+            self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState, persistent=True)
+        except Exception:
+            rospy.logwarn("⚠️ 未连接到 /gazebo/get_model_state，将使用货架 fallback 位姿。")
+        try:
+            rospy.wait_for_service('/gazebo/get_model_properties', timeout=1.0)
+            self.get_model_properties = rospy.ServiceProxy('/gazebo/get_model_properties', GetModelProperties, persistent=True)
+        except Exception:
+            rospy.logwarn("⚠️ 未连接到 /gazebo/get_model_properties，将默认使用 link 作为物体链接名。")
 
         # 增加触发 VLM 的发布器
         self.pub_wrist_trigger = rospy.Publisher('/wrist_vlm/trigger', String, queue_size=1)
@@ -114,6 +207,7 @@ class PickPlaceDemo:
         rospy.loginfo(">> 机械臂后台执行器已就绪！")
         rospy.loginfo(">> 等待调度器下发任务...")
         rospy.loginfo("=" * 50)
+        self.add_fixed_shelf_collision_geometry()
         self.add_basket_collision_geometry()
         self.detach_grasped_object()
 
@@ -124,12 +218,99 @@ class PickPlaceDemo:
         filename = f"task_{self.task_figure_index:03d}_{label}.png"
         cv2.imwrite(os.path.join(self.figure_output_dir, filename), self.debug_rgb)
 
+    def clear_failure_reason(self):
+        self.last_failure_stage = ""
+        self.last_failure_reason = ""
+
+    def set_failure_reason(self, stage, reason):
+        self.last_failure_stage = str(stage)
+        self.last_failure_reason = str(reason)
+        payload = json.dumps(
+            {"stage": self.last_failure_stage, "reason": self.last_failure_reason},
+            ensure_ascii=False,
+        )
+        self.failure_reason_pub.publish(payload)
+        rospy.logwarn(f"⚠️ 失败阶段: {self.last_failure_stage}, 原因: {self.last_failure_reason}")
+
     def refresh_shelf_collision_space(self):
         try:
             self.refresh_background()
             rospy.loginfo("🧹 已刷新货架背景点云与碰撞空间。")
         except Exception as e:
             rospy.logwarn(f"⚠️ 刷新货架碰撞空间失败: {e}")
+
+    def clear_active_grasp_target(self):
+        self.active_grasp_target_pub.publish("")
+
+    def pose_to_xyz(self, pose):
+        return [
+            float(pose.position.x),
+            float(pose.position.y),
+            float(pose.position.z),
+        ]
+
+    def publish_active_grasp_target(
+        self,
+        target_pose,
+        robot_z,
+        back_distance,
+        width_hint=0.04,
+        depth_hint=0.03,
+        pre_grasp_pose=None,
+        observation_pose=None,
+        insert_distance=None,
+    ):
+        target = np.array(
+            [target_pose.position.x, target_pose.position.y, target_pose.position.z],
+            dtype=np.float64,
+        )
+        robot_z = np.array(robot_z, dtype=np.float64)
+        norm = np.linalg.norm(robot_z)
+        if norm < 1e-6:
+            return
+        robot_z = robot_z / norm
+
+        corridor_back = float(back_distance + self.wrist_observation_backoff + 0.04)
+        corridor_front = float(max(0.06, insert_distance if insert_distance is not None else (depth_hint + 0.04)))
+        corridor_radius = float(np.clip((width_hint * 0.5) + self.grasp_corridor_padding, 0.05, 0.10))
+
+        corridor_segments_world = []
+        if observation_pose is not None and pre_grasp_pose is not None:
+            corridor_segments_world.append(
+                {
+                    "start": self.pose_to_xyz(observation_pose),
+                    "end": self.pose_to_xyz(pre_grasp_pose),
+                }
+            )
+            corridor_segments_world.append(
+                {
+                    "start": self.pose_to_xyz(pre_grasp_pose),
+                    "end": (target + robot_z * corridor_front).tolist(),
+                }
+            )
+        else:
+            corridor_segments_world.append(
+                {
+                    "start": (target - robot_z * corridor_back).tolist(),
+                    "end": (target + robot_z * corridor_front).tolist(),
+                }
+            )
+
+        payload = {
+            "enabled": True,
+            "corridor_start_world": (target - robot_z * corridor_back).tolist(),
+            "corridor_end_world": (target + robot_z * corridor_front).tolist(),
+            "corridor_radius_m": corridor_radius,
+            "corridor_segments_world": corridor_segments_world,
+        }
+        self.active_grasp_target_pub.publish(json.dumps(payload, ensure_ascii=False))
+        rospy.loginfo(
+            "🛣️ 已发布当前抓取走廊: segments=%d, back=%.3f m, front=%.3f m, radius=%.3f m",
+            len(corridor_segments_world),
+            corridor_back,
+            corridor_front,
+            corridor_radius,
+        )
 
     def add_world_box(self, name, center_xyz, size_xyz):
         pose = PoseStamped()
@@ -139,6 +320,154 @@ class PickPlaceDemo:
         pose.pose.position.y = center_xyz[1]
         pose.pose.position.z = center_xyz[2]
         self.scene.add_box(name, pose, size=size_xyz)
+
+    def get_shelf_collision_specs(self):
+        # 直接对齐当前 Gazebo 模型 narrow_supermarket_shelf_enclosed_0 的碰撞几何。
+        return [
+            ("shelf_base", (0.0, 0.0, 0.10), (0.32, 0.60, 0.20)),
+            ("shelf_backboard", (0.15, 0.0, 0.40), (0.02, 0.60, 0.80)),
+            ("shelf_side_left", (0.0, 0.31, 0.40), (0.32, 0.02, 0.80)),
+            ("shelf_side_right", (0.0, -0.31, 0.40), (0.32, 0.02, 0.80)),
+            ("shelf_board_bottom", (0.0, 0.0, 0.21), (0.30, 0.60, 0.02)),
+            ("shelf_board_middle", (0.0, 0.0, 0.41), (0.30, 0.60, 0.02)),
+            ("shelf_board_top", (0.0, 0.0, 0.61), (0.30, 0.60, 0.02)),
+        ]
+
+    def get_shelf_world_pose(self):
+        if self.get_model_state is not None:
+            try:
+                resp = self.get_model_state(self.shelf_model_name, "world")
+                if getattr(resp, "success", False):
+                    q = resp.pose.orientation
+                    yaw = float(tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2])
+                    return {
+                        "x": float(resp.pose.position.x),
+                        "y": float(resp.pose.position.y),
+                        "z": float(resp.pose.position.z),
+                        "yaw": yaw,
+                    }
+                rospy.logwarn(
+                    f"⚠️ Gazebo 未返回货架 {self.shelf_model_name} 的有效位姿，改用 fallback 位姿。"
+                )
+            except Exception as e:
+                rospy.logwarn(f"⚠️ 查询 Gazebo 货架位姿失败，改用 fallback 位姿: {e}")
+        return dict(self.shelf_pose_fallback)
+
+    def add_fixed_shelf_collision_geometry(self):
+        if not self.use_fixed_shelf_collision:
+            rospy.loginfo("📚 已关闭固定货架碰撞几何。")
+            return
+
+        shelf_pose = self.get_shelf_world_pose()
+        transform = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        transform[:3, 3] = np.array(
+            [shelf_pose["x"], shelf_pose["y"], shelf_pose["z"]],
+            dtype=np.float64,
+        )
+
+        for name, local_center, size_xyz in self.get_shelf_collision_specs():
+            self.scene.remove_world_object(name)
+            local = np.array([local_center[0], local_center[1], local_center[2], 1.0], dtype=np.float64)
+            world = transform @ local
+            self.add_world_box(name, (float(world[0]), float(world[1]), float(world[2])), size_xyz)
+
+        rospy.loginfo(
+            "📚 已将固定货架碰撞几何加入 MoveIt 场景: model=%s x=%.3f y=%.3f z=%.3f yaw=%.3f",
+            self.shelf_model_name,
+            shelf_pose["x"],
+            shelf_pose["y"],
+            shelf_pose["z"],
+            shelf_pose["yaw"],
+        )
+
+    def get_shelf_inward_axis_world(self):
+        shelf_pose = self.get_shelf_world_pose()
+        shelf_tf = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        inward = shelf_tf[:3, :3] @ np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        norm = np.linalg.norm(inward)
+        if norm < 1e-6:
+            return None
+        return inward / norm
+
+    def get_shelf_inner_regions_local(self):
+        return [
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.235, "zmax": 0.385},
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.435, "zmax": 0.585},
+            {"xmin": -0.12, "xmax": 0.12, "ymin": -0.27, "ymax": 0.27, "zmin": 0.635, "zmax": 0.775},
+        ]
+
+    def world_point_to_shelf_local(self, point_xyz):
+        shelf_pose = self.get_shelf_world_pose()
+        shelf_tf = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        shelf_tf[:3, 3] = np.array([shelf_pose["x"], shelf_pose["y"], shelf_pose["z"]], dtype=np.float64)
+        world_to_shelf = np.linalg.inv(shelf_tf)
+        point_h = np.array([point_xyz[0], point_xyz[1], point_xyz[2], 1.0], dtype=np.float64)
+        point_local = world_to_shelf @ point_h
+        return point_local[:3]
+
+    def compute_shelf_cavity_clearance(self, pose):
+        point_local = self.world_point_to_shelf_local(
+            [pose.position.x, pose.position.y, pose.position.z]
+        )
+        best_clearance = None
+        for region in self.get_shelf_inner_regions_local():
+            if (
+                region["xmin"] <= point_local[0] <= region["xmax"]
+                and region["ymin"] <= point_local[1] <= region["ymax"]
+                and region["zmin"] <= point_local[2] <= region["zmax"]
+            ):
+                clearance = min(
+                    point_local[0] - region["xmin"],
+                    region["xmax"] - point_local[0],
+                    point_local[1] - region["ymin"],
+                    region["ymax"] - point_local[1],
+                    point_local[2] - region["zmin"],
+                    region["zmax"] - point_local[2],
+                )
+                if best_clearance is None or clearance > best_clearance:
+                    best_clearance = clearance
+        return None if best_clearance is None else float(best_clearance)
+
+    def get_downward_place_orientation(self):
+        # 采用一个固定的末端朝下姿态作为备用放置姿态。
+        q = tft.quaternion_from_euler(np.pi, 0.0, 0.0)
+        pose = Pose()
+        pose.orientation.x = q[0]
+        pose.orientation.y = q[1]
+        pose.orientation.z = q[2]
+        pose.orientation.w = q[3]
+        return pose.orientation
+
+    def get_place_transport_orientation(self, current_pose):
+        mode = self.place_orientation_mode
+        if mode == "downward":
+            return copy.deepcopy(self.get_downward_place_orientation())
+        return copy.deepcopy(current_pose.orientation)
+
+    def orientation_distance_deg(self, orientation_a, orientation_b):
+        qa = np.array(
+            [orientation_a.x, orientation_a.y, orientation_a.z, orientation_a.w],
+            dtype=np.float64,
+        )
+        qb = np.array(
+            [orientation_b.x, orientation_b.y, orientation_b.z, orientation_b.w],
+            dtype=np.float64,
+        )
+        if np.linalg.norm(qa) < 1e-8 or np.linalg.norm(qb) < 1e-8:
+            return 180.0
+        qa /= np.linalg.norm(qa)
+        qb /= np.linalg.norm(qb)
+        dot = float(np.clip(abs(np.dot(qa, qb)), -1.0, 1.0))
+        return float(np.degrees(2.0 * np.arccos(dot)))
+
+    def orientations_match(self, orientation_a, orientation_b, tol_deg=5.0):
+        return self.orientation_distance_deg(orientation_a, orientation_b) <= float(tol_deg)
+
+    def align_current_pose_orientation(self, target_orientation, description, retries=2):
+        current_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+        target_pose = copy.deepcopy(current_pose)
+        target_pose.orientation = copy.deepcopy(target_orientation)
+        return self.execute_pose_goal(target_pose, description, retries=retries)
 
     def add_basket_collision_geometry(self):
         bx, by, bz = self.basket_x, self.basket_y, self.basket_z
@@ -158,6 +487,9 @@ class PickPlaceDemo:
         )
 
     def get_next_basket_slot(self):
+        if not self.use_basket_slot_grid:
+            return self.basket_x, self.basket_y
+
         # 3 列 x 2 行的简单摆放网格，避免后续物体都堆在同一处。
         col = self.drop_counter % 3
         row = (self.drop_counter // 3) % 2
@@ -172,6 +504,7 @@ class PickPlaceDemo:
             self.stop_requested = True
             self.arm.move_group.stop()
             self.is_running_task = False
+            self.set_failure_reason("user_interrupt", "stop_command")
             self.arm.go_to_home()
             self.status_pub.publish("FAILED_BY_USER")
         elif cmd == 'all_done':
@@ -213,6 +546,9 @@ class PickPlaceDemo:
         except Exception:
             pass
 
+    def gazebo_model_states_cb(self, msg):
+        self.gazebo_model_states = msg
+
     def transform_pose(self, input_pose, target_frame="world"):
         try:
             transform = self.tf_buffer.lookup_transform(
@@ -249,6 +585,47 @@ class PickPlaceDemo:
         # 仅在抓取深度明显偏大时再额外往里补，避免默认插入过深。
         extra_depth = self.insert_extra_depth_min + max(0.0, depth_hint - 0.02) + self.insert_depth_margin
         return float(np.clip(extra_depth, self.insert_extra_depth_min, self.insert_extra_depth_max))
+
+    def compute_command_grasp_width(self, predicted_width):
+        predicted_width = float(predicted_width) if predicted_width is not None else 0.04
+        lightly_shrunk = max(0.0, predicted_width - self.grasp_width_margin)
+        command_width = float(
+            np.clip(
+                lightly_shrunk,
+                self.grasp_command_width_min,
+                self.grasp_command_width_max,
+            )
+        )
+        return command_width, lightly_shrunk
+
+    def build_level_grasp_quaternion(self, robot_z, roll_variant="y_down"):
+        robot_z = np.array(robot_z, dtype=np.float64)
+        norm = np.linalg.norm(robot_z)
+        if norm < 1e-6:
+            return None
+        robot_z = robot_z / norm
+        world_down = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+
+        if str(roll_variant).lower() == "x_down":
+            robot_x = world_down
+            robot_y = np.cross(robot_z, robot_x)
+            if np.linalg.norm(robot_y) < 1e-6:
+                return None
+            robot_y = robot_y / np.linalg.norm(robot_y)
+            robot_x = np.cross(robot_y, robot_z)
+        else:
+            robot_y = world_down
+            robot_x = np.cross(robot_y, robot_z)
+            if np.linalg.norm(robot_x) < 1e-6:
+                return None
+            robot_x = robot_x / np.linalg.norm(robot_x)
+            robot_y = np.cross(robot_z, robot_x)
+
+        new_rot_mat = np.eye(4)
+        new_rot_mat[:3, 0] = robot_x / np.linalg.norm(robot_x)
+        new_rot_mat[:3, 1] = robot_y / np.linalg.norm(robot_y)
+        new_rot_mat[:3, 2] = robot_z
+        return tft.quaternion_from_matrix(new_rot_mat)
 
     def get_gripper_touch_links(self):
         ee_link = self.arm.move_group.get_end_effector_link()
@@ -320,6 +697,98 @@ class PickPlaceDemo:
         self.attached_object_size = None
         return True
 
+    def is_graspable_gazebo_model(self, name):
+        ignored_prefixes = (
+            "ground_plane",
+            "depth_camera_model",
+            "panda",
+            "grasp_basket",
+            "narrow_supermarket_shelf_enclosed",
+        )
+        return isinstance(name, str) and not name.startswith(ignored_prefixes)
+
+    def get_gazebo_model_link_name(self, model_name):
+        if self.get_model_properties is not None:
+            try:
+                resp = self.get_model_properties(model_name)
+                body_names = list(getattr(resp, "body_names", []))
+                if body_names:
+                    return body_names[0]
+            except Exception as e:
+                rospy.logwarn(f"⚠️ 获取 Gazebo 模型 {model_name} 的 link 名失败，回退到默认 link: {e}")
+        return "link"
+
+    def find_nearest_gazebo_object(self, target_pose):
+        if self.gazebo_model_states is None:
+            return None, None
+
+        target = np.array([target_pose.position.x, target_pose.position.y, target_pose.position.z], dtype=np.float64)
+        ee_pose = self.arm.move_group.get_current_pose().pose
+        ee_pos = np.array([ee_pose.position.x, ee_pose.position.y, ee_pose.position.z], dtype=np.float64)
+        best_name = None
+        best_score = None
+        for name, pose in zip(self.gazebo_model_states.name, self.gazebo_model_states.pose):
+            if not self.is_graspable_gazebo_model(name):
+                continue
+            pos = np.array([pose.position.x, pose.position.y, pose.position.z], dtype=np.float64)
+            dist_target = float(np.linalg.norm(pos - target))
+            dist_ee = float(np.linalg.norm(pos - ee_pos))
+            score = dist_target + 0.35 * dist_ee
+            if best_score is None or score < best_score:
+                best_name = name
+                best_score = score
+
+        if best_name is None or best_score is None or best_score > self.gazebo_attach_distance_threshold:
+            return None, None
+        return best_name, self.get_gazebo_model_link_name(best_name)
+
+    def attach_gazebo_object_if_possible(self, target_pose):
+        if not self.enable_gazebo_attach:
+            return False
+        model_name, link_name = self.find_nearest_gazebo_object(target_pose)
+        if model_name is None:
+            rospy.logwarn("⚠️ 未找到足够接近当前目标位姿的 Gazebo 物体，跳过物理附着。")
+            return False
+        try:
+            attacher = GazeboLinkAttacher(
+                model_name_1="panda",
+                link_name_1=self.gazebo_attach_link_name,
+                model_name_2=model_name,
+                link_name_2=link_name,
+            )
+            if attacher.attach():
+                self.attached_gazebo_model = model_name
+                self.attached_gazebo_link = link_name
+                rospy.loginfo(f"🪝 已在 Gazebo 中附着物体: model={model_name}, link={link_name}")
+                return True
+        except Exception as e:
+            rospy.logwarn(f"⚠️ Gazebo attach 调用失败: {e}")
+        return False
+
+    def detach_gazebo_object_if_needed(self):
+        if not self.enable_gazebo_attach or self.attached_gazebo_model is None:
+            return True
+        try:
+            attacher = GazeboLinkAttacher(
+                model_name_1="panda",
+                link_name_1=self.gazebo_attach_link_name,
+                model_name_2=self.attached_gazebo_model,
+                link_name_2=self.attached_gazebo_link or "link",
+            )
+            ok = attacher.detach()
+            if ok:
+                rospy.loginfo(f"🪝 已在 Gazebo 中释放物体: model={self.attached_gazebo_model}")
+            else:
+                rospy.logwarn(f"⚠️ Gazebo detach 返回失败: model={self.attached_gazebo_model}")
+            self.attached_gazebo_model = None
+            self.attached_gazebo_link = None
+            return ok
+        except Exception as e:
+            rospy.logwarn(f"⚠️ Gazebo detach 调用失败: {e}")
+            self.attached_gazebo_model = None
+            self.attached_gazebo_link = None
+            return False
+
     def execute_pose_goal(self, target_pose, description, retries=2):
         for attempt in range(1, retries + 1):
             if self.stop_requested:
@@ -339,10 +808,148 @@ class PickPlaceDemo:
 
             rospy.logwarn(f"⚠️ {description} 失败，准备重试...")
             rospy.sleep(0.4)
-
         return False
 
-    def move_vertical_to_z(self, target_z, description):
+    def execute_position_only_goal(self, x, y, z, description, retries=2):
+        """仅约束位置，不约束姿态，让规划器自由选择末端朝向，适用于放置搬运阶段。"""
+        for attempt in range(1, retries + 1):
+            if self.stop_requested:
+                return False
+            self.arm.move_group.set_start_state_to_current_state()
+            self.arm.move_group.clear_pose_targets()
+            self.arm.move_group.set_position_target([x, y, z])
+            rospy.loginfo(f"{description} [仅位置] (第 {attempt}/{retries} 次尝试) x={x:.3f} y={y:.3f} z={z:.3f}")
+            success = self.arm.move_group.go(wait=True)
+            self.arm.move_group.stop()
+            self.arm.move_group.clear_pose_targets()
+            if success:
+                return True
+            current_pose = self.arm.move_group.get_current_pose().pose
+            pos_err = float(
+                np.linalg.norm(
+                    np.array(
+                        [
+                            current_pose.position.x - x,
+                            current_pose.position.y - y,
+                            current_pose.position.z - z,
+                        ],
+                        dtype=np.float64,
+                    )
+                )
+            )
+            if pos_err <= 0.02:
+                rospy.logwarn(
+                    f"⚠️ {description} [仅位置] 返回失败，但位置误差仅 {pos_err:.4f} m，按成功处理。"
+                )
+                return True
+            rospy.logwarn(f"⚠️ {description} [仅位置] 失败，准备重试...")
+            rospy.sleep(0.4)
+        return False
+
+    def move_to_current_xy_z_position_only(self, target_z, description):
+        current_pose = self.arm.move_group.get_current_pose().pose
+        return self.execute_position_only_goal(
+            current_pose.position.x,
+            current_pose.position.y,
+            target_z,
+            description,
+            retries=2,
+        )
+
+    def execute_transport_goal(self, x, y, z, description, retries=2):
+        current_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+        target_pose = copy.deepcopy(current_pose)
+        target_pose.position.x = x
+        target_pose.position.y = y
+        target_pose.position.z = z
+
+        if self.use_pose_preserving_transport:
+            if self.execute_pose_goal(target_pose, f"{description} [保姿态优先]", retries=retries):
+                return True
+            rospy.logwarn(f"⚠️ {description} 保姿态规划失败，回退到仅位置目标。")
+
+        return self.execute_position_only_goal(x, y, z, description, retries=retries)
+
+    def move_to_current_xy_z_transport_goal(self, target_z, description):
+        current_pose = self.arm.move_group.get_current_pose().pose
+        return self.execute_transport_goal(
+            current_pose.position.x,
+            current_pose.position.y,
+            target_z,
+            description,
+            retries=2,
+        )
+
+    def move_horizontal_to_xy(
+        self,
+        target_x,
+        target_y,
+        description,
+        orientation=None,
+        allow_position_only_fallback=True,
+    ):
+        current_pose = self.arm.move_group.get_current_pose().pose
+        dx = float(target_x - current_pose.position.x)
+        dy = float(target_y - current_pose.position.y)
+        horizontal_dist = float(np.linalg.norm([dx, dy]))
+        if horizontal_dist < 0.003:
+            rospy.loginfo(f"{description}：当前水平位置已满足，无需额外平移。")
+            return True
+
+        target_orientation = copy.deepcopy(orientation) if orientation is not None else copy.deepcopy(current_pose.orientation)
+        orientation_locked = orientation is not None
+
+        rospy.loginfo(
+            f"{description}：水平平移 {horizontal_dist:.3f} m "
+            f"(dx={dx:.3f}, dy={dy:.3f})"
+        )
+        if not orientation_locked or self.orientations_match(current_pose.orientation, target_orientation, tol_deg=2.0):
+            if self.segmented_cartesian_move(
+                dx=dx,
+                dy=dy,
+                dz=0.0,
+                description=description,
+                step_size=self.transport_step_size,
+                min_step=0.01,
+                avoid_collisions=True,
+            ):
+                return True
+        else:
+            rospy.loginfo(f"{description}：当前末端尚未对齐固定放置姿态，跳过笛卡尔平移，直接尝试位姿规划。")
+
+        if orientation_locked:
+            rospy.logwarn(f"⚠️ {description} 直线平移失败，改为保持固定放置姿态的位姿规划。")
+        else:
+            rospy.logwarn(f"⚠️ {description} 直线平移失败，改为保持当前姿态的位姿规划。")
+        target_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+        target_pose.position.x = target_x
+        target_pose.position.y = target_y
+        target_pose.orientation = target_orientation
+        pose_label = "固定放置姿态" if orientation_locked else "保当前姿态"
+        if self.execute_pose_goal(target_pose, f"{description} [{pose_label}]", retries=2):
+            return True
+
+        if not allow_position_only_fallback:
+            rospy.logwarn(f"🛑 {description} 固定姿态规划失败，且已禁止回退到仅位置目标。")
+            return False
+
+        rospy.logwarn(f"⚠️ {description} 保持姿态的位姿规划也失败，最后才回退到仅位置目标。")
+        current_pose = self.arm.move_group.get_current_pose().pose
+        return self.execute_position_only_goal(
+            target_x,
+            target_y,
+            current_pose.position.z,
+            description,
+            retries=2,
+        )
+
+    def move_vertical_to_z(
+        self,
+        target_z,
+        description,
+        orientation=None,
+        allow_position_only_fallback=True,
+    ):
         current_pose = self.arm.move_group.get_current_pose().pose
         dz = target_z - current_pose.position.z
         if abs(dz) < 0.003:
@@ -351,11 +958,41 @@ class PickPlaceDemo:
 
         direction = "抬升" if dz > 0 else "下降"
         rospy.loginfo(f"{description}：{direction} {abs(dz):.3f} m")
-        return self.segmented_cartesian_move(
-            dx=0.0, dy=0.0, dz=dz,
-            description=description,
-            step_size=0.04, min_step=0.01,
-            avoid_collisions=True
+        target_orientation = copy.deepcopy(orientation) if orientation is not None else copy.deepcopy(current_pose.orientation)
+        orientation_locked = orientation is not None
+        if not orientation_locked or self.orientations_match(current_pose.orientation, target_orientation, tol_deg=2.0):
+            if self.segmented_cartesian_move(
+                dx=0.0,
+                dy=0.0,
+                dz=dz,
+                description=description,
+                step_size=self.lift_step_size,
+                min_step=0.005,
+                avoid_collisions=True,
+            ):
+                return True
+        else:
+            rospy.loginfo(f"{description}：当前末端尚未对齐固定放置姿态，跳过笛卡尔升降，直接尝试位姿规划。")
+
+        target_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+        target_pose.position.z = target_z
+        target_pose.orientation = target_orientation
+        pose_label = "固定放置姿态" if orientation_locked else "保当前姿态"
+        if self.execute_pose_goal(target_pose, f"{description} [{pose_label}]", retries=2):
+            return True
+
+        if not allow_position_only_fallback:
+            rospy.logwarn(f"🛑 {description} 固定姿态规划失败，且已禁止回退到仅位置目标。")
+            return False
+
+        rospy.logwarn(f"⚠️ {description} 笛卡尔抬升/下降失败，回退到仅位置约束规划。")
+        current_pose = self.arm.move_group.get_current_pose().pose
+        return self.execute_position_only_goal(
+            current_pose.position.x,
+            current_pose.position.y,
+            target_z,
+            description,
+            retries=2,
         )
 
     def get_ik_seeded(self, pose, seed_q, frame_id):
@@ -423,7 +1060,18 @@ class PickPlaceDemo:
                 return False
         success = self.arm.move_group.execute(plan, wait=True)
         self.arm.move_group.stop()
-        return success
+        if success:
+            return True
+
+        current_joints = np.array(self.arm.move_group.get_current_joint_values()[:len(points[-1].positions)], dtype=np.float64)
+        target_joints = np.array(points[-1].positions, dtype=np.float64)
+        max_joint_error = float(np.max(np.abs(current_joints - target_joints)))
+        if max_joint_error <= 0.02:
+            rospy.logwarn(
+                f"⚠️ 笛卡尔执行返回失败，但末端关节已足够接近目标 (max_joint_error={max_joint_error:.4f} rad)，按成功处理。"
+            )
+            return True
+        return False
 
     def build_linear_waypoints(self, dx, dy, dz, step_size):
         """从当前位置沿直线构建 waypoints 和对应累计位移。"""
@@ -733,6 +1381,53 @@ class PickPlaceDemo:
         target = PANDA_HAND_TO_FINGERTIP - depth_hint + self.wrist_grasp_depth_margin
         return float(np.clip(target, self.wrist_grasp_forward_min, self.wrist_grasp_forward_max))
 
+    def compute_insert_distance_from_wrist(self, chosen_depth, fallback_distance):
+        fallback_distance = float(max(0.0, fallback_distance))
+        if not self.use_wrist_guided_insert_distance:
+            return fallback_distance
+
+        measurement = self.calculate_world_correction(return_details=True)
+        if not measurement["valid"] or measurement["hand_forward"] is None:
+            rospy.logwarn("⚠️ 手腕相机未返回有效前向距离，回退到模型估计插入距离。")
+            return fallback_distance
+
+        desired_forward = self.compute_wrist_grasp_forward_target(depth_hint=chosen_depth)
+        measured_forward = float(measurement["hand_forward"])
+        insert_distance_from_measurement = max(0.0, measured_forward - desired_forward)
+        # 手腕测距只允许在几何 fallback 基础上“增加”插入深度，
+        # 不能把本来应该走到的包裹距离缩短，否则会出现未包裹住目标就闭爪。
+        lower_bound = max(
+            self.min_insert_distance,
+            fallback_distance,
+        )
+        upper_bound = fallback_distance + self.wrist_extra_insert_max
+        insert_distance = float(
+            np.clip(
+                max(fallback_distance, insert_distance_from_measurement),
+                lower_bound,
+                upper_bound,
+            )
+        )
+        rospy.loginfo(
+            f"[5/6] 手腕测距修正插入: measured_forward={measured_forward:.3f} m, "
+            f"desired_forward={desired_forward:.3f} m, fallback={fallback_distance:.3f} m, "
+            f"final_insert={insert_distance:.3f} m"
+        )
+        return insert_distance
+
+    def compute_remaining_insert_distance(self, target_pose, robot_z, extra_depth):
+        current_pose = self.arm.move_group.get_current_pose().pose
+        delta = np.array(
+            [
+                target_pose.position.x - current_pose.position.x,
+                target_pose.position.y - current_pose.position.y,
+                target_pose.position.z - current_pose.position.z,
+            ],
+            dtype=np.float64,
+        )
+        remaining_to_target = max(0.0, float(np.dot(delta, np.array(robot_z, dtype=np.float64))))
+        return remaining_to_target + float(extra_depth)
+
     def run_wrist_alignment_loop(self, stage_label, max_iters=2, require_visible=True):
         """
         仅使用手腕相机做横向校正和可见性确认，不使用前向距离决定闭爪时机。
@@ -756,6 +1451,8 @@ class PickPlaceDemo:
                 [measurement["world_dx"], measurement["world_dy"], measurement["world_dz"]],
                 dtype=np.float64,
             )
+            if not self.wrist_alignment_allow_vertical:
+                correction[2] = 0.0
             correction_norm = float(np.linalg.norm(correction))
 
             if visible_ok:
@@ -779,9 +1476,9 @@ class PickPlaceDemo:
                 return True
 
             if not self.apply_safe_world_correction(
-                measurement["world_dx"],
-                measurement["world_dy"],
-                measurement["world_dz"],
+                float(correction[0]),
+                float(correction[1]),
+                float(correction[2]),
             ):
                 rospy.logwarn(f"{stage_label} 手腕横向校正失败。")
                 return False
@@ -829,7 +1526,7 @@ class PickPlaceDemo:
             dy=robot_z[1] * total_to_move,
             dz=robot_z[2] * total_to_move,
             description="[5/6] 手腕引导平滑插入",
-            step_size=0.04,
+            step_size=self.insert_step_size,
             min_step=0.01,
             avoid_collisions=False
         ):
@@ -842,21 +1539,36 @@ class PickPlaceDemo:
 
     def pick_object(self):
         rospy.loginfo("[1/6] 正在等待 GTSP 下发的抓取姿态...")
+        self.current_item_collision_size = None
         wait_count = 0
         while self.grasp_pose_array_received is None:
             rospy.sleep(0.5)
             wait_count += 1
             if wait_count > 60:
                 rospy.logerr("等待超时！未收到候选抓取姿态。")
+                self.set_failure_reason("observation_unreachable", "no_grasp_pose_received")
                 return False
 
         planning_frame = self.robot.get_planning_frame()
-        best_plan, best_pre_grasp_pose, best_target_pose = None, None, None
+        best_plan, best_pre_grasp_pose, best_target_pose, best_observation_pose = None, None, None, None
         chosen_width = 0.04
         chosen_depth = 0.03
-        best_robot_z, best_robot_x, best_robot_y = None, None, None
+        best_robot_z = None
+        selected_back_distance = self.pre_grasp_back_distance
+
+        self.clear_active_grasp_target()
+        if self.refresh_collision_before_pick:
+            self.refresh_shelf_collision_space()
 
         rospy.loginfo("🔍 开始强制水平修正与避障评估...")
+        shelf_inward_axis = self.get_shelf_inward_axis_world() if self.force_shelf_normal_approach else None
+        if self.force_shelf_normal_approach and shelf_inward_axis is not None:
+            rospy.loginfo(
+                "🧭 当前抓取将强制沿货架法向插入: axis=(%.3f, %.3f, %.3f)",
+                shelf_inward_axis[0],
+                shelf_inward_axis[1],
+                shelf_inward_axis[2],
+            )
 
         for i, raw_pose in enumerate(self.grasp_pose_array_received.poses):
             ps = PoseStamped()
@@ -877,79 +1589,107 @@ class PickPlaceDemo:
             flat_approach = np.array([raw_grasp_x[0], raw_grasp_x[1], 0.0])
             norm = np.linalg.norm(flat_approach)
 
-            if norm < 0.001: continue
+            if norm < 0.001:
+                continue
 
             robot_z = flat_approach / norm
-            robot_x = np.array([0.0, 0.0, -1.0])
-            robot_y = np.cross(robot_z, robot_x)
-            robot_y = robot_y / np.linalg.norm(robot_y)
-            robot_x = np.cross(robot_y, robot_z)
-
-            new_rot_mat = np.eye(4)
-            new_rot_mat[:3, 0], new_rot_mat[:3, 1], new_rot_mat[:3, 2] = robot_x, robot_y, robot_z
-            q_new = tft.quaternion_from_matrix(new_rot_mat)
-            target_pose_stamped.pose.orientation.x = q_new[0]
-            target_pose_stamped.pose.orientation.y = q_new[1]
-            target_pose_stamped.pose.orientation.z = q_new[2]
-            target_pose_stamped.pose.orientation.w = q_new[3]
+            if shelf_inward_axis is not None:
+                robot_z = shelf_inward_axis.copy()
 
             if target_pose_stamped.pose.position.z < 0.08:
                 target_pose_stamped.pose.position.z = 0.08
 
-            back_distance = self.pre_grasp_back_distance
-            pre_grasp_pose = copy.deepcopy(target_pose_stamped.pose)
-            pre_grasp_pose.position.x -= robot_z[0] * back_distance
-            pre_grasp_pose.position.y -= robot_z[1] * back_distance
-            pre_grasp_pose.position.z -= robot_z[2] * back_distance
-
-            observation_pose = copy.deepcopy(pre_grasp_pose)
-            observation_pose.position.x -= robot_z[0] * self.wrist_observation_backoff
-            observation_pose.position.y -= robot_z[1] * self.wrist_observation_backoff
-            observation_pose.position.z -= robot_z[2] * self.wrist_observation_backoff
-
-            self.arm.move_group.set_start_state_to_current_state()
-
-            # 优先用 GTSP 预计算的关节角为种子规划，保证构型一致
             seed_q = list(self.grasp_infos[3:10]) if len(self.grasp_infos) >= 10 else None
-            observation_q = self.get_ik_seeded(observation_pose, seed_q, planning_frame) if seed_q else None
-            if observation_q is not None:
-                rospy.loginfo("✅ seeded IK 成功，使用关节角目标规划到观察位。")
-                self.arm.move_group.set_joint_value_target(observation_q)
-            else:
-                self.arm.move_group.set_pose_target(observation_pose)
 
-            plan_result = self.arm.move_group.plan()
-            if isinstance(plan_result, tuple):
-                success, plan = plan_result[0], plan_result[1]
-            else:
-                success, plan = len(plan_result.joint_trajectory.points) > 0, plan_result
+            success = False
+            for roll_variant in self.grasp_roll_variants:
+                q_new = self.build_level_grasp_quaternion(robot_z, roll_variant=roll_variant)
+                if q_new is None:
+                    continue
 
-            self.arm.move_group.clear_pose_targets()
+                candidate_target_pose = copy.deepcopy(target_pose_stamped.pose)
+                candidate_target_pose.orientation.x = q_new[0]
+                candidate_target_pose.orientation.y = q_new[1]
+                candidate_target_pose.orientation.z = q_new[2]
+                candidate_target_pose.orientation.w = q_new[3]
+
+                for back_distance in self.pre_grasp_back_distance_candidates:
+                    pre_grasp_pose = copy.deepcopy(candidate_target_pose)
+                    pre_grasp_pose.position.x -= robot_z[0] * back_distance
+                    pre_grasp_pose.position.y -= robot_z[1] * back_distance
+                    pre_grasp_pose.position.z -= robot_z[2] * back_distance
+
+                    observation_pose = copy.deepcopy(pre_grasp_pose)
+                    observation_pose.position.x -= robot_z[0] * self.wrist_observation_backoff
+                    observation_pose.position.y -= robot_z[1] * self.wrist_observation_backoff
+                    observation_pose.position.z -= robot_z[2] * self.wrist_observation_backoff
+
+                    self.arm.move_group.set_start_state_to_current_state()
+                    observation_q = self.get_ik_seeded(observation_pose, seed_q, planning_frame) if seed_q else None
+                    if observation_q is not None:
+                        rospy.loginfo(
+                            f"✅ seeded IK 成功，使用关节角目标规划到观察位 "
+                            f"(roll={roll_variant}, back_distance={back_distance:.3f} m)。"
+                        )
+                        self.arm.move_group.set_joint_value_target(observation_q)
+                    else:
+                        self.arm.move_group.set_pose_target(observation_pose)
+
+                    plan_result = self.arm.move_group.plan()
+                    if isinstance(plan_result, tuple):
+                        success, plan = plan_result[0], plan_result[1]
+                    else:
+                        success, plan = len(plan_result.joint_trajectory.points) > 0, plan_result
+                    self.arm.move_group.clear_pose_targets()
+
+                    if success:
+                        rospy.loginfo(f"🎉 成功锁定纯平行抓取姿态！(roll={roll_variant})")
+                        best_plan = plan
+                        best_pre_grasp_pose = pre_grasp_pose
+                        best_target_pose = candidate_target_pose
+                        best_observation_pose = observation_pose
+                        best_robot_z = robot_z
+                        selected_back_distance = back_distance
+                        chosen_width = self.grasp_infos[i * 3] if len(self.grasp_infos) > i * 3 else 0.04
+                        chosen_depth = self.grasp_infos[i * 3 + 2] if len(self.grasp_infos) > i * 3 + 2 else 0.03
+                        break
+
+                    rospy.logwarn(
+                        f"⚠️ 姿态 {i+1} 在 roll={roll_variant}, back_distance={back_distance:.3f} m 时观察位不可达，尝试其他构型。"
+                    )
+
+                if success:
+                    break
 
             if success:
-                rospy.loginfo("🎉 成功锁定纯平行抓取姿态！")
-                best_plan = plan
-                best_pre_grasp_pose = pre_grasp_pose
-                best_target_pose = target_pose_stamped.pose
-                best_robot_z, best_robot_x, best_robot_y = robot_z, robot_x, robot_y
-                chosen_width = self.grasp_infos[i * 3] if len(self.grasp_infos) > i * 3 else 0.04
-                chosen_depth = self.grasp_infos[i * 3 + 2] if len(self.grasp_infos) > i * 3 + 2 else 0.03
                 break
-            else:
-                rospy.logwarn(f"❌ 姿态 {i+1} 会撞货架，被淘汰！")
+
+            rospy.logwarn(f"❌ 姿态 {i+1} 会撞货架，被淘汰！")
 
         if best_plan is None:
             rospy.logerr("所有候选姿态都不可达！")
             self.grasp_pose_array_received = None
+            self.set_failure_reason("observation_unreachable", "all_candidates_unreachable")
             return False
 
         self.detach_grasped_object()
         self.gripper.open(width=0.08)
         self.task_figure_index += 1
+        self.publish_active_grasp_target(
+            best_target_pose,
+            best_robot_z,
+            selected_back_distance,
+            width_hint=chosen_width,
+            depth_hint=chosen_depth,
+            pre_grasp_pose=best_pre_grasp_pose,
+            observation_pose=best_observation_pose,
+        )
+        self.refresh_shelf_collision_space()
 
         rospy.loginfo("[4/6] 先移动到更靠后的观察位 (扩大手腕相机视野)...")
         if not self.arm.move_group.execute(best_plan, wait=True):
             rospy.logerr("移动失败！")
+            self.set_failure_reason("observation_unreachable", "execute_observation_plan_failed")
             return False
 
         rospy.sleep(1.0) 
@@ -958,20 +1698,25 @@ class PickPlaceDemo:
         # =========================================================================
         # 🌟🌟🌟 [步骤 4.5] VLM 语义微调 (TF 树空间刚体逆解版) 🌟🌟🌟
         # =========================================================================
-        rospy.loginfo("[4.5/6] 📸 启动腕部相机，执行 3D 刚体逆解对齐...")
-
-        fine_measurement = self.calculate_world_correction(return_details=True)
-        fine_dx = fine_measurement["world_dx"]
-        fine_dy = fine_measurement["world_dy"]
-        fine_dz = fine_measurement["world_dz"]
-
-        fine_dx = np.clip(fine_dx, -0.10, 0.10)
-        fine_dy = np.clip(fine_dy, -0.10, 0.10)
-        fine_dz = np.clip(fine_dz, -0.10, 0.10)
-
-        if not self.apply_safe_world_correction(fine_dx, fine_dy, fine_dz):
-            rospy.logwarn("🛑 腕部相机微调执行失败！")
-            return False
+        rospy.loginfo("[4.5/6] 📸 启动腕部相机，执行抓前对齐...")
+        if self.use_iterative_wrist_alignment:
+            if not self.run_wrist_alignment_loop(
+                "[4.5/6] 腕部多轮对齐",
+                max_iters=self.wrist_alignment_max_iters,
+                require_visible=self.wrist_require_full_visibility,
+            ):
+                rospy.logwarn("🛑 腕部多轮对齐失败！")
+                self.set_failure_reason("wrist_alignment_failed", "iterative_alignment_failed")
+                return False
+        else:
+            fine_measurement = self.calculate_world_correction(return_details=True)
+            fine_dx = np.clip(fine_measurement["world_dx"], -0.10, 0.10)
+            fine_dy = np.clip(fine_measurement["world_dy"], -0.10, 0.10)
+            fine_dz = np.clip(fine_measurement["world_dz"], -0.10, 0.10) if self.wrist_alignment_allow_vertical else 0.0
+            if not self.apply_safe_world_correction(fine_dx, fine_dy, fine_dz):
+                rospy.logwarn("🛑 腕部相机微调执行失败！")
+                self.set_failure_reason("wrist_alignment_failed", "single_alignment_failed")
+                return False
         rospy.sleep(0.5)
         # =========================================================================
 
@@ -986,20 +1731,52 @@ class PickPlaceDemo:
                 min_step=0.01,
                 avoid_collisions=False
             ):
-                rospy.logwarn("🛑 无法从观察位推进到预抓取位！")
-                return False
+                rospy.logwarn("⚠️ 无法完全推进到预抓取位，将基于当前位置继续计算剩余插入距离。")
             rospy.sleep(0.3)
+
+        if self.use_final_wrist_alignment:
+            rospy.loginfo("[4.9/6] 在预抓取位做最后一次腕部对齐...")
+            if not self.run_wrist_alignment_loop(
+                "[4.9/6] 预抓取位终对齐",
+                max_iters=1,
+                require_visible=False,
+            ):
+                rospy.logwarn("🛑 预抓取位终对齐失败！")
+                self.set_failure_reason("wrist_alignment_failed", "final_alignment_failed")
+                return False
+            rospy.sleep(0.2)
         
         rospy.loginfo(f"[5/6] 像抽屉一样水平滑入柜子...")
         extra_depth = self.compute_insert_extra_depth(
             width_hint=chosen_width,
             depth_hint=chosen_depth
         )
-        total_insert_distance = back_distance + extra_depth
-        rospy.loginfo(
-            f"[5/6] 插入距离规划: back_distance={back_distance:.3f} m, "
-            f"extra_depth={extra_depth:.3f} m, total={total_insert_distance:.3f} m"
+        total_insert_distance = self.compute_remaining_insert_distance(
+            best_target_pose,
+            best_robot_z,
+            extra_depth,
         )
+        total_insert_distance = self.compute_insert_distance_from_wrist(
+            chosen_depth=chosen_depth,
+            fallback_distance=total_insert_distance,
+        )
+        rospy.loginfo(
+            f"[5/6] 插入距离规划: extra_depth={extra_depth:.3f} m, "
+            f"final_total={total_insert_distance:.3f} m"
+        )
+
+        current_pre_insert_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+        self.publish_active_grasp_target(
+            best_target_pose,
+            best_robot_z,
+            selected_back_distance,
+            width_hint=chosen_width,
+            depth_hint=chosen_depth,
+            pre_grasp_pose=current_pre_insert_pose,
+            observation_pose=current_pre_insert_pose,
+            insert_distance=total_insert_distance,
+        )
+        self.refresh_shelf_collision_space()
 
         in_dx = best_robot_z[0] * total_insert_distance
         in_dy = best_robot_z[1] * total_insert_distance
@@ -1010,23 +1787,35 @@ class PickPlaceDemo:
             dy=in_dy,
             dz=in_dz,
             description="[5/6] 水平滑入柜子",
-            step_size=0.04,
+            step_size=self.insert_step_size,
             min_step=0.01,
             avoid_collisions=False
         ):
             rospy.logwarn("🛑 拦截：直线插入控制失败！")
+            self.set_failure_reason("insert_failed", "cartesian_insert_failed")
             return False
 
         rospy.sleep(0.5)
 
-        target_width = max(0.0, chosen_width - 0.01)
-        # 不再写死 0.025m，直接使用 GraspNet 估计出的抓取宽度，并做夹爪行程限幅。
-        command_width = float(np.clip(target_width, 0.02, 0.078))
+        command_width, lightly_shrunk_width = self.compute_command_grasp_width(chosen_width)
         rospy.loginfo(
-            f"[6/6] 闭合夹爪 (预测宽度: {target_width:.3f}m, 下发宽度: {command_width:.3f}m)"
+            f"[6/6] 闭合夹爪 (预测宽度: {chosen_width:.3f}m, "
+            f"轻微收紧: {lightly_shrunk_width:.3f}m, 下发宽度: {command_width:.3f}m)"
         )
-        if not self.gripper.close(width=command_width, force=50.0):
+        if not self.gripper.close(width=command_width, force=self.grasp_force):
             rospy.logwarn("🛑 夹爪闭合动作失败，放弃附着碰撞体。")
+            self.set_failure_reason("grasp_failed", "gripper_close_failed")
+            return False
+        self.last_grasp_width_hint = float(chosen_width)
+        self.last_grasp_depth_hint = float(chosen_depth)
+        self.current_item_collision_size = self.estimate_grasped_object_size(
+            width_hint=chosen_width,
+            depth_hint=chosen_depth,
+        )
+        attach_ok = self.attach_gazebo_object_if_possible(best_target_pose)
+        if self.enable_gazebo_attach and getattr(self.gripper, "last_grasp_was_soft_success", False) and not attach_ok:
+            rospy.logwarn("🛑 夹爪仅达到软成功，且 Gazebo 未找到可附着的目标物体，按未抓住处理。")
+            self.set_failure_reason("grasp_failed", "soft_grasp_without_attach")
             return False
         self.attach_grasped_object(width_hint=chosen_width, depth_hint=chosen_depth)
         rospy.sleep(1.0)
@@ -1034,32 +1823,34 @@ class PickPlaceDemo:
 
         rospy.loginfo(">>> 保持水平原路撤出...")
         if not self.segmented_cartesian_move(
-            dx=0.0,
-            dy=0.0,
-            dz=0.03,
-            description="抓取后轻微抬升",
-            step_size=0.015,
-            min_step=0.01,
-            avoid_collisions=False
-        ):
-            rospy.logwarn("⚠️ 抓取后轻微抬升失败，继续尝试水平撤出。")
-
-        if not self.segmented_cartesian_move(
             dx=-in_dx,
             dy=-in_dy,
             dz=-in_dz,
             description="保持水平原路撤出",
-            step_size=0.04,
+            step_size=self.retreat_step_size,
             min_step=0.01,
             avoid_collisions=False
         ):
             rospy.logwarn("🛑 撤出时发生异常，尝试强行回 Home！")
+            self.set_failure_reason("retreat_failed", "cartesian_retreat_failed")
             return False
 
         rospy.sleep(0.5)
 
-        rospy.loginfo(">>> 完全离开柜子，安全抬高...")
-        # self.arm.cartesian_move_relative(dx=0.0, dy=0.0, dz=0.12)
+        # 额外后退确保完全离开货架，再抬升
+        extra_retreat = self.pre_grasp_back_distance
+        total_in = max(abs(in_dx), abs(in_dy), abs(in_dz))
+        if total_in > 1e-6:
+            rx = -in_dx / total_in * extra_retreat
+            ry = -in_dy / total_in * extra_retreat
+            rz = -in_dz / total_in * extra_retreat
+            self.segmented_cartesian_move(
+                dx=rx, dy=ry, dz=rz,
+                description="额外后退离开货架",
+                step_size=self.retreat_step_size,
+                min_step=0.005,
+                avoid_collisions=False
+            )
 
         self.grasp_pose_array_received = None
         self.grasp_infos = []
@@ -1075,47 +1866,96 @@ class PickPlaceDemo:
 
         current_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
         basket_top_z = self.basket_z + self.basket_size[2]
-        safe_transit_z = max(current_pose.position.z + 0.08, basket_top_z + 0.12)
-        release_z = basket_top_z + 0.04
-        slot_x, slot_y = self.basket_x, self.basket_y
+        item_size = self.current_item_collision_size
+        if item_size is None:
+            item_size = self.attached_object_size
+        if item_size is None:
+            item_size = self.estimate_grasped_object_size(
+                width_hint=self.last_grasp_width_hint,
+                depth_hint=self.last_grasp_depth_hint,
+            )
+        item_half_height = 0.5 * float(item_size[2]) if item_size is not None else 0.05
+        transport_clearance = max(self.place_hover_height, item_half_height + 0.015)
+        release_z = basket_top_z + self.place_release_height_offset
+        transit_z = basket_top_z + transport_clearance
+        slot_x, slot_y = self.get_next_basket_slot()
+        place_orientation = self.get_place_transport_orientation(current_pose)
 
-        rospy.loginfo("[放置 1/4] 先抬升到安全过渡高度...")
-        if not self.move_vertical_to_z(safe_transit_z, "放置前安全抬升"):
-            rospy.logwarn("⚠️ 无法抬升到安全过渡高度，放置中止。")
+        if self.place_orientation_mode == "downward":
+            rospy.loginfo("🧭 放置阶段姿态模式: downward（末端切到固定朝下姿态后再搬运）。")
+        else:
+            rospy.loginfo("🧭 放置阶段姿态模式: preserve（保持抓取完成后的当前世界姿态）。")
+
+        rospy.loginfo("[放置 1/3] 必要时调整到放置高度...")
+        pre_align_orientation = current_pose.orientation if self.place_orientation_mode == "downward" else place_orientation
+        if not self.move_vertical_to_z(
+            transit_z,
+            "放置前高度调整",
+            orientation=pre_align_orientation,
+            allow_position_only_fallback=self.place_allow_position_only_fallback,
+        ):
+            rospy.logwarn("⚠️ 无法调整到放置高度，放置中止。")
+            self.set_failure_reason("place_transit_failed", "pre_place_height_adjust_failed")
             return False
 
-        over_basket_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
-        over_basket_pose.position.x = slot_x
-        over_basket_pose.position.y = slot_y
-        over_basket_pose.position.z = safe_transit_z
+        if self.place_orientation_mode == "downward":
+            current_pose = copy.deepcopy(self.arm.move_group.get_current_pose().pose)
+            if not self.orientations_match(current_pose.orientation, place_orientation, tol_deg=3.0):
+                rospy.loginfo("[放置 1.5/3] 切换到固定放置姿态...")
+                if not self.align_current_pose_orientation(
+                    place_orientation,
+                    "切换到固定放置姿态",
+                    retries=2,
+                ):
+                    rospy.logwarn("⚠️ 无法切换到固定放置姿态，放置中止。")
+                    self.set_failure_reason("place_transit_failed", "align_place_orientation_failed")
+                    return False
 
         rospy.loginfo(
-            f"[放置 2/4] 规划到篮子上方: x={over_basket_pose.position.x:.2f}, "
-            f"y={over_basket_pose.position.y:.2f}, z={over_basket_pose.position.z:.2f}"
+            f"[放置 2/3] 平移到篮子上方: x={slot_x:.2f}, "
+            f"y={slot_y:.2f}, z={transit_z:.2f}"
         )
-        if not self.execute_pose_goal(over_basket_pose, "移动到篮子上方安全位"):
+        if not self.move_horizontal_to_xy(
+            slot_x,
+            slot_y,
+            "移动到篮子上方安全位",
+            orientation=place_orientation,
+            allow_position_only_fallback=self.place_allow_position_only_fallback,
+        ):
             rospy.logwarn("⚠️ 到达篮子上方失败，放置中止。")
+            self.set_failure_reason("place_transit_failed", "move_over_basket_failed")
             return False
 
-        rospy.loginfo("[放置 3/4] 垂直下降到释放高度...")
-        if not self.move_vertical_to_z(release_z, "下放到释放高度"):
-            rospy.logwarn("⚠️ 下放到释放高度失败，放置中止。")
-            return False
+        if not self.simple_place_drop:
+            rospy.loginfo("[放置 3/4] 垂直下降到释放高度...")
+            if not self.move_vertical_to_z(
+                release_z,
+                "下放到释放高度",
+                orientation=place_orientation,
+                allow_position_only_fallback=self.place_allow_position_only_fallback,
+            ):
+                rospy.logwarn("⚠️ 下放到释放高度失败，放置中止。")
+                self.set_failure_reason("place_drop_failed", "descend_to_release_failed")
+                return False
 
-        rospy.loginfo("[放置 4/4] 张开夹爪，释放物体并撤离...")
-        if not self.gripper.open():
-            rospy.logwarn("⚠️ 夹爪张开失败，放置中止。")
+        rospy.loginfo("[放置 3/3] 张开夹爪，释放物体。")
+        detached_ok = self.detach_gazebo_object_if_needed()
+        open_ok = self.gripper.open()
+        if not open_ok and not detached_ok:
+            rospy.logwarn("⚠️ 夹爪张开失败，且 Gazebo 物体未成功释放，放置中止。")
+            self.set_failure_reason("place_drop_failed", "gripper_open_failed")
             return False
+        if not open_ok and detached_ok:
+            rospy.logwarn("⚠️ 夹爪张开返回失败，但 Gazebo 物体已释放，按已放置处理。")
         rospy.sleep(0.5)
         self.detach_grasped_object()
+        self.clear_active_grasp_target()
         self.drop_counter += 1
+        self.current_item_collision_size = None
         self.save_task_keyframe("placed")
 
-        if not self.move_vertical_to_z(safe_transit_z, "释放后安全撤离抬升"):
-            rospy.logwarn("⚠️ 释放后撤离抬升失败。")
-            return False
-
-        self.refresh_shelf_collision_space()
+        if self.refresh_collision_after_each_place:
+            self.refresh_shelf_collision_space()
 
         self.arm.move_group.stop()
         self.arm.move_group.clear_pose_targets()
@@ -1125,6 +1965,7 @@ class PickPlaceDemo:
         self.arm.go_to_home()
         while not rospy.is_shutdown():
             self.stop_requested = False
+            self.clear_failure_reason()
             if self.grasp_pose_array_received is None:
                 if self.show_grasp_debug and self.debug_rgb is not None: cv2.waitKey(1)
                 rospy.sleep(0.1)
@@ -1165,6 +2006,10 @@ class PickPlaceDemo:
                 rospy.loginfo(f"📊 本次任务统计: task_time={task_elapsed:.3f} s")
             if not task_success or self.stop_requested:
                 rospy.loginfo(">>> 任务失败，回到 Home 保证安全。")
+                self.detach_gazebo_object_if_needed()
+                self.detach_grasped_object()
+                self.clear_active_grasp_target()
+                self.current_item_collision_size = None
                 self.arm.go_to_home()
             rospy.loginfo(">>> 已复位，准备接收下一任务或等待调度器通知完成...")
             self.status_pub.publish("DONE" if task_success else "FAILED")

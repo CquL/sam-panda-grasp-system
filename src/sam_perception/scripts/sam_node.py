@@ -3,6 +3,7 @@
 
 import sys
 import os
+import json
 
 # ==============================================================================
 # 1. 修复 Numpy 版本冲突
@@ -14,13 +15,16 @@ import numpy as np
 import cv2
 import struct
 import os
+import tf.transformations as tft
+import tf2_ros
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, PointField
-from std_msgs.msg import Header, Float32MultiArray
+from std_msgs.msg import Header, Float32MultiArray, String
 from cv_bridge import CvBridge
 from segment_anything import sam_model_registry, SamPredictor
 import open3d as o3d
 import sensor_msgs.point_cloud2 as pc2
 from std_srvs.srv import Empty, EmptyResponse
+from gazebo_msgs.srv import GetModelState
 
 class SAMPerceptionNode:
     def __init__(self):
@@ -32,6 +36,63 @@ class SAMPerceptionNode:
             rospy.get_param("~figure_output_dir", "~/grasp_robot_ws/thesis_figures")
         )
         self.figure_index = 0
+        self.object_front_depth_percentile = float(
+            rospy.get_param("~object_front_depth_percentile", 15.0)
+        )
+        self.object_depth_gate_band = float(
+            rospy.get_param("~object_depth_gate_band", 0.10)
+        )
+        self.object_component_min_pixels = int(
+            rospy.get_param("~object_component_min_pixels", 80)
+        )
+        self.publish_background_collision_cloud = bool(
+            rospy.get_param("~publish_background_collision_cloud", False)
+        )
+        self.publish_local_obstacle_cloud = bool(
+            rospy.get_param("~publish_local_obstacle_cloud", True)
+        )
+        self.local_obstacle_max_points = int(
+            rospy.get_param("~local_obstacle_max_points", 6000)
+        )
+        self.shelf_model_name = str(
+            rospy.get_param("~shelf_model_name", "narrow_supermarket_shelf_enclosed_0")
+        )
+        self.shelf_pose_fallback = {
+            "x": float(rospy.get_param("~shelf_pose_fallback_x", 0.737098)),
+            "y": float(rospy.get_param("~shelf_pose_fallback_y", -0.148598)),
+            "z": float(rospy.get_param("~shelf_pose_fallback_z", 0.205537)),
+            "yaw": float(rospy.get_param("~shelf_pose_fallback_yaw", 0.0)),
+        }
+        self.shelf_inner_margin_x = float(
+            rospy.get_param("~shelf_inner_margin_x", 0.03)
+        )
+        self.shelf_inner_margin_y = float(
+            rospy.get_param("~shelf_inner_margin_y", 0.03)
+        )
+        self.shelf_inner_margin_z = float(
+            rospy.get_param("~shelf_inner_margin_z", 0.015)
+        )
+        self.background_min_depth = float(
+            rospy.get_param("~background_min_depth", 0.55)
+        )
+        self.object_clearance_margin_x = float(
+            rospy.get_param("~object_clearance_margin_x", 0.06)
+        )
+        self.object_clearance_margin_y = float(
+            rospy.get_param("~object_clearance_margin_y", 0.08)
+        )
+        self.object_clearance_margin_z = float(
+            rospy.get_param("~object_clearance_margin_z", 0.08)
+        )
+        self.collision_clearance_margin_px = int(
+            rospy.get_param("~collision_clearance_margin_px", 35)
+        )
+        self.collision_clearance_kernel = int(
+            rospy.get_param("~collision_clearance_kernel", 75)
+        )
+        self.collision_clearance_depth_band = float(
+            rospy.get_param("~collision_clearance_depth_band", 0.20)
+        )
         
         package_path = os.path.dirname(os.path.dirname(__file__))
         checkpoint = os.path.join(package_path, "models", "sam_vit_b_01ec64.pth")
@@ -58,6 +119,17 @@ class SAMPerceptionNode:
         
         self.cloud_pub = rospy.Publisher("/sam_perception/object_cloud", PointCloud2, queue_size=1)
         self.bg_cloud_pub = rospy.Publisher("/sam_perception/background_cloud", PointCloud2, queue_size=1)
+        self.metadata_pub = rospy.Publisher("/sam_perception/object_metadata", String, queue_size=1)
+        self.active_grasp_target = None
+        rospy.Subscriber("/sam_perception/active_grasp_target", String, self.active_grasp_target_cb, queue_size=1)
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.get_model_state = None
+        try:
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=0.5)
+            self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState, persistent=True)
+        except Exception:
+            rospy.logwarn("⚠️ SAM 节点未连接到 /gazebo/get_model_state，将使用货架 fallback 位姿。")
 
         self.curr_rgb = None
         self.curr_depth = None
@@ -76,6 +148,21 @@ class SAMPerceptionNode:
         cv2.namedWindow("VLM BBoxes")
         cv2.namedWindow("SAM Result")
         cv2.namedWindow("SAM Mask")
+
+    def active_grasp_target_cb(self, msg):
+        text = msg.data.strip()
+        if not text:
+            self.active_grasp_target = None
+            return
+        try:
+            payload = json.loads(text)
+        except Exception:
+            rospy.logwarn("⚠️ 无法解析 active_grasp_target，已忽略。")
+            return
+        if not isinstance(payload, dict) or not payload.get("enabled", True):
+            self.active_grasp_target = None
+            return
+        self.active_grasp_target = payload
 
     def info_callback(self, msg):
         self.intrinsics = np.array(msg.K).reshape(3, 3)
@@ -152,6 +239,7 @@ class SAMPerceptionNode:
 
         combined_mask = np.zeros(self.curr_rgb.shape[:2], dtype=bool)
         object_masks = []
+        object_metadata = []
         vis_img = self.curr_rgb.copy()
         image_set = False
 
@@ -214,6 +302,20 @@ class SAMPerceptionNode:
 
                 object_masks.append(mask)
                 combined_mask |= mask
+                mask_y_indices, mask_x_indices = np.where(mask)
+                object_metadata.append(
+                    {
+                        "object_id": len(object_masks) - 1,
+                        "source_box_index": idx,
+                        "source_bbox": [int(x_min), int(y_min), int(x_max), int(y_max)],
+                        "mask_bbox": [
+                            int(np.min(mask_x_indices)),
+                            int(np.min(mask_y_indices)),
+                            int(np.max(mask_x_indices)),
+                            int(np.max(mask_y_indices)),
+                        ],
+                    }
+                )
 
                 cv2.rectangle(vis_img, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
                 cv2.rectangle(vis_img, (inner_x_min, inner_y_min), (inner_x_max, inner_y_max), (255, 0, 0), 1)
@@ -250,6 +352,23 @@ class SAMPerceptionNode:
                     rospy.logwarn(f"⚠️ 目标 {object_idx+1} 无有效深度点，跳过")
                     continue
 
+                front_depth = float(np.percentile(z, self.object_front_depth_percentile))
+                depth_gate = self.curr_depth <= (front_depth + self.object_depth_gate_band)
+                refined_valid = valid & depth_gate
+                refined_z = self.curr_depth[refined_valid]
+                if len(refined_z) >= max(80, int(0.2 * len(z))):
+                    valid = refined_valid
+                    z = refined_z
+
+                source_bbox = None
+                if object_idx < len(object_metadata):
+                    source_bbox = object_metadata[object_idx].get("source_bbox")
+                component_mask = self.pick_target_component(valid, source_bbox)
+                component_z = self.curr_depth[component_mask]
+                if len(component_z) >= self.object_component_min_pixels:
+                    valid = component_mask
+                    z = component_z
+
                 x_3d = (u[valid] - cx) * z / fx
                 y_3d = (v[valid] - cy) * z / fy
                 points = np.stack((x_3d, y_3d, z), axis=-1)
@@ -283,27 +402,48 @@ class SAMPerceptionNode:
                     window_name="Multi-Target Point Cloud Check"
                 )
 
-            mask_uint8 = (combined_mask.astype(np.uint8) * 255)
-            kernel = np.ones((60, 60), np.uint8)
-            dilated_mask_uint8 = cv2.dilate(mask_uint8, kernel, iterations=2)
-            dilated_mask = dilated_mask_uint8 > 0
+            if self.publish_background_collision_cloud or self.publish_local_obstacle_cloud:
+                dilated_mask = self.build_collision_clearance_mask(object_masks, object_metadata)
 
-            bg_valid = (~dilated_mask) & np.isfinite(self.curr_depth) & (self.curr_depth > 0.1) & (self.curr_depth < 2.0)
-            bg_z = self.curr_depth[bg_valid]
+                obstacle_valid = (
+                    (~dilated_mask)
+                    & np.isfinite(self.curr_depth)
+                    & (self.curr_depth > 0.1)
+                    & (self.curr_depth < 2.0)
+                )
+                obstacle_z = self.curr_depth[obstacle_valid]
 
-            if len(bg_z) > 0:
-                bg_x_3d = (u[bg_valid] - cx) * bg_z / fx
-                bg_y_3d = (v[bg_valid] - cy) * bg_z / fy
-                bg_points = np.stack((bg_x_3d, bg_y_3d, bg_z), axis=-1)
+                if len(obstacle_z) > 0:
+                    obstacle_x_3d = (u[obstacle_valid] - cx) * obstacle_z / fx
+                    obstacle_y_3d = (v[obstacle_valid] - cy) * obstacle_z / fy
+                    bg_points = np.stack((obstacle_x_3d, obstacle_y_3d, obstacle_z), axis=-1).astype(np.float32)
+                    bg_points = self.remove_points_near_objects(bg_points, all_points)
 
-                if len(bg_points) > 20000:
-                    idxs = np.random.choice(len(bg_points), 20000, replace=False)
-                    bg_points = bg_points[idxs]
+                    if self.publish_background_collision_cloud:
+                        if len(bg_points) > 20000:
+                            idxs = np.random.choice(len(bg_points), 20000, replace=False)
+                            bg_points = bg_points[idxs]
+                    elif self.publish_local_obstacle_cloud:
+                        bg_points = self.filter_points_to_shelf_cavities(bg_points)
+                        bg_points = self.remove_points_in_active_grasp_corridor(bg_points)
+                        if len(bg_points) > self.local_obstacle_max_points:
+                            idxs = np.random.choice(len(bg_points), self.local_obstacle_max_points, replace=False)
+                            bg_points = bg_points[idxs]
+                else:
+                    bg_points = np.empty((0, 3), dtype=np.float32)
             else:
                 bg_points = np.empty((0, 3), dtype=np.float32)
 
+            if self.publish_background_collision_cloud:
+                rospy.loginfo("🧱 当前发布完整背景点云碰撞。")
+            elif self.publish_local_obstacle_cloud:
+                rospy.loginfo("🧱 当前发布货架腔体内的局部动态障碍点云。")
+            else:
+                rospy.loginfo("🧱 当前使用固定货架几何，已跳过背景点云碰撞发布。")
+
             rospy.loginfo(f"✨ 点云处理成功！总目标点数: {len(points)}, 环境点数: {len(bg_points)}")
 
+            self.publish_object_metadata(object_metadata)
             self.publish_point_cloud(points, colors_bgr, object_ids)
             self.publish_background_point_cloud(bg_points)
 
@@ -345,7 +485,11 @@ class SAMPerceptionNode:
         cx, cy = self.intrinsics[0, 2], self.intrinsics[1, 2]
         u, v = np.meshgrid(np.arange(w_d), np.arange(h_d))
 
-        valid = np.isfinite(self.curr_depth) & (self.curr_depth > 0.1) & (self.curr_depth < 2.0)
+        valid = (
+            np.isfinite(self.curr_depth)
+            & (self.curr_depth > self.background_min_depth)
+            & (self.curr_depth < 2.0)
+        )
         z = self.curr_depth[valid]
         if len(z) == 0:
             return np.empty((0, 3), dtype=np.float32)
@@ -359,13 +503,167 @@ class SAMPerceptionNode:
             bg_points = bg_points[idxs]
         return bg_points
 
+    def get_shelf_world_pose(self):
+        if self.get_model_state is not None:
+            try:
+                resp = self.get_model_state(self.shelf_model_name, "world")
+                if getattr(resp, "success", False):
+                    q = resp.pose.orientation
+                    yaw = float(tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2])
+                    return {
+                        "x": float(resp.pose.position.x),
+                        "y": float(resp.pose.position.y),
+                        "z": float(resp.pose.position.z),
+                        "yaw": yaw,
+                    }
+            except Exception as e:
+                rospy.logwarn(f"⚠️ SAM 查询货架位姿失败，改用 fallback: {e}")
+        return dict(self.shelf_pose_fallback)
+
+    def get_camera_to_world_matrix(self):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "world", "depth_camera_link", rospy.Time(0), rospy.Duration(0.5)
+            )
+            q = transform.transform.rotation
+            mat = tft.quaternion_matrix([q.x, q.y, q.z, q.w])
+            mat[:3, 3] = np.array(
+                [
+                    transform.transform.translation.x,
+                    transform.transform.translation.y,
+                    transform.transform.translation.z,
+                ],
+                dtype=np.float64,
+            )
+            return mat
+        except Exception as e:
+            rospy.logwarn(f"⚠️ SAM 获取 depth_camera_link -> world TF 失败: {e}")
+            return None
+
+    def get_shelf_inner_regions_local(self):
+        mx = self.shelf_inner_margin_x
+        my = self.shelf_inner_margin_y
+        mz = self.shelf_inner_margin_z
+        return [
+            {
+                "xmin": -0.15 + mx,
+                "xmax": 0.15 - mx,
+                "ymin": -0.30 + my,
+                "ymax": 0.30 - my,
+                "zmin": 0.22 + mz,
+                "zmax": 0.40 - mz,
+            },
+            {
+                "xmin": -0.15 + mx,
+                "xmax": 0.15 - mx,
+                "ymin": -0.30 + my,
+                "ymax": 0.30 - my,
+                "zmin": 0.42 + mz,
+                "zmax": 0.60 - mz,
+            },
+            {
+                "xmin": -0.15 + mx,
+                "xmax": 0.15 - mx,
+                "ymin": -0.30 + my,
+                "ymax": 0.30 - my,
+                "zmin": 0.62 + mz,
+                "zmax": 0.79 - mz,
+            },
+        ]
+
+    def filter_points_to_shelf_cavities(self, points_cam):
+        if len(points_cam) == 0:
+            return points_cam
+
+        cam_to_world = self.get_camera_to_world_matrix()
+        if cam_to_world is None:
+            return np.empty((0, 3), dtype=np.float32)
+
+        shelf_pose = self.get_shelf_world_pose()
+        shelf_tf = tft.euler_matrix(0.0, 0.0, shelf_pose["yaw"])
+        shelf_tf[:3, 3] = np.array([shelf_pose["x"], shelf_pose["y"], shelf_pose["z"]], dtype=np.float64)
+        world_to_shelf = np.linalg.inv(shelf_tf)
+
+        points_h = np.hstack([points_cam.astype(np.float64), np.ones((len(points_cam), 1), dtype=np.float64)])
+        points_world = (cam_to_world @ points_h.T).T
+        points_local = (world_to_shelf @ points_world.T).T[:, :3]
+
+        keep_mask = np.zeros(len(points_local), dtype=bool)
+        for region in self.get_shelf_inner_regions_local():
+            inside = (
+                (points_local[:, 0] >= region["xmin"]) & (points_local[:, 0] <= region["xmax"]) &
+                (points_local[:, 1] >= region["ymin"]) & (points_local[:, 1] <= region["ymax"]) &
+                (points_local[:, 2] >= region["zmin"]) & (points_local[:, 2] <= region["zmax"])
+            )
+            keep_mask |= inside
+
+        return points_cam[keep_mask].astype(np.float32)
+
+    def remove_points_in_active_grasp_corridor(self, points_cam):
+        if len(points_cam) == 0 or not isinstance(self.active_grasp_target, dict):
+            return points_cam
+
+        radius = float(self.active_grasp_target.get("corridor_radius_m", 0.07))
+        segments = self.active_grasp_target.get("corridor_segments_world")
+        if not isinstance(segments, list) or len(segments) == 0:
+            start = self.active_grasp_target.get("corridor_start_world")
+            end = self.active_grasp_target.get("corridor_end_world")
+            if (
+                isinstance(start, (list, tuple)) and len(start) == 3
+                and isinstance(end, (list, tuple)) and len(end) == 3
+            ):
+                segments = [{"start": start, "end": end}]
+            else:
+                return points_cam
+
+        cam_to_world = self.get_camera_to_world_matrix()
+        if cam_to_world is None:
+            return points_cam
+
+        points_h = np.hstack([points_cam.astype(np.float64), np.ones((len(points_cam), 1), dtype=np.float64)])
+        points_world = (cam_to_world @ points_h.T).T[:, :3]
+
+        keep_mask = np.ones(len(points_world), dtype=bool)
+        for segment in segments:
+            start = segment.get("start")
+            end = segment.get("end")
+            if not (
+                isinstance(start, (list, tuple)) and len(start) == 3
+                and isinstance(end, (list, tuple)) and len(end) == 3
+            ):
+                continue
+            start = np.array(start, dtype=np.float64)
+            end = np.array(end, dtype=np.float64)
+            seg = end - start
+            seg_norm_sq = float(np.dot(seg, seg))
+            if seg_norm_sq < 1e-9:
+                continue
+
+            rel = points_world - start
+            t = np.clip((rel @ seg) / seg_norm_sq, 0.0, 1.0)
+            closest = start + np.outer(t, seg)
+            dist = np.linalg.norm(points_world - closest, axis=1)
+            keep_mask &= (dist > radius)
+
+        return points_cam[keep_mask].astype(np.float32)
+
     def handle_refresh_background(self, _req):
+        if not self.publish_background_collision_cloud and not self.publish_local_obstacle_cloud:
+            self.publish_background_point_cloud(np.empty((0, 3), dtype=np.float32))
+            rospy.loginfo("🔄 当前禁用背景点云碰撞，refresh_background 仅清空 octomap。")
+            return EmptyResponse()
         bg_points = self.build_full_scene_background()
         if len(bg_points) == 0:
             rospy.logwarn("⚠️ 当前无法重建完整背景点云，跳过 refresh_background。")
             return EmptyResponse()
+        if self.publish_local_obstacle_cloud and not self.publish_background_collision_cloud:
+            bg_points = self.filter_points_to_shelf_cavities(bg_points)
+            bg_points = self.remove_points_in_active_grasp_corridor(bg_points)
+            if len(bg_points) > self.local_obstacle_max_points:
+                idxs = np.random.choice(len(bg_points), self.local_obstacle_max_points, replace=False)
+                bg_points = bg_points[idxs]
         self.publish_background_point_cloud(bg_points)
-        rospy.loginfo("🔄 已按当前场景重新发布背景点云，用于恢复货架碰撞空间。")
+        rospy.loginfo("🔄 已按当前场景重新发布局部动态障碍点云，用于恢复货架碰撞空间。")
         return EmptyResponse()
 
     def publish_point_cloud(self, points, colors_bgr, object_ids):
@@ -397,7 +695,6 @@ class SAMPerceptionNode:
         rospy.loginfo(f"☁️ 已发布多目标带 object_id 点云！目标数: {len(np.unique(object_ids))}")
 
     def publish_background_point_cloud(self, bg_points):
-        if len(bg_points) == 0: return
         try:
             rospy.wait_for_service('/clear_octomap', timeout=0.5)
             clear_octomap = rospy.ServiceProxy('/clear_octomap', Empty)
@@ -405,12 +702,119 @@ class SAMPerceptionNode:
             rospy.loginfo("🧹 已刷新环境碰撞地图！")
         except Exception:
             pass
-            
+
+        if len(bg_points) == 0:
+            return
+
         header = Header()
         header.stamp = rospy.Time.now()
         header.frame_id = "depth_camera_link" 
         cloud_msg = pc2.create_cloud_xyz32(header, bg_points)
         self.bg_cloud_pub.publish(cloud_msg)
+
+    def publish_object_metadata(self, object_metadata):
+        payload = {
+            "count": len(object_metadata),
+            "objects": object_metadata,
+        }
+        self.metadata_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+        rospy.loginfo("🗂️ 已发布 object metadata，目标数: %d", len(object_metadata))
+
+    def remove_points_near_objects(self, bg_points, object_point_sets):
+        if len(bg_points) == 0 or len(object_point_sets) == 0:
+            return bg_points
+
+        keep_mask = np.ones(len(bg_points), dtype=bool)
+        for points in object_point_sets:
+            if len(points) == 0:
+                continue
+            mins = np.min(points, axis=0)
+            maxs = np.max(points, axis=0)
+            mins[0] -= self.object_clearance_margin_x
+            maxs[0] += self.object_clearance_margin_x
+            mins[1] -= self.object_clearance_margin_y
+            maxs[1] += self.object_clearance_margin_y
+            mins[2] -= self.object_clearance_margin_z
+            maxs[2] += self.object_clearance_margin_z
+
+            inside = (
+                (bg_points[:, 0] >= mins[0]) & (bg_points[:, 0] <= maxs[0]) &
+                (bg_points[:, 1] >= mins[1]) & (bg_points[:, 1] <= maxs[1]) &
+                (bg_points[:, 2] >= mins[2]) & (bg_points[:, 2] <= maxs[2])
+            )
+            keep_mask &= ~inside
+
+        return bg_points[keep_mask]
+
+    def pick_target_component(self, valid_mask, source_bbox=None):
+        if not np.any(valid_mask):
+            return valid_mask
+
+        num_labels, label_img, stats, _centroids = cv2.connectedComponentsWithStats(
+            valid_mask.astype(np.uint8), connectivity=8
+        )
+        if num_labels <= 2:
+            return valid_mask
+
+        target_label = None
+        if source_bbox is not None:
+            xmin, ymin, xmax, ymax = [int(v) for v in source_bbox]
+            cx = int((xmin + xmax) / 2.0)
+            cy = int((ymin + ymax) / 2.0)
+            if 0 <= cx < label_img.shape[1] and 0 <= cy < label_img.shape[0]:
+                center_label = int(label_img[cy, cx])
+                if center_label > 0 and stats[center_label, cv2.CC_STAT_AREA] >= self.object_component_min_pixels:
+                    target_label = center_label
+
+        if target_label is None:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            if len(areas) == 0:
+                return valid_mask
+            target_label = int(np.argmax(areas)) + 1
+
+        refined_mask = label_img == target_label
+        return refined_mask
+
+    def build_collision_clearance_mask(self, object_masks, object_metadata):
+        if len(object_masks) == 0:
+            return np.zeros_like(self.curr_depth, dtype=bool)
+
+        kernel_size = max(3, int(self.collision_clearance_kernel))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        clearance_mask = np.zeros_like(object_masks[0], dtype=bool)
+
+        for object_idx, object_mask in enumerate(object_masks):
+            local_mask = object_mask.copy()
+            front_depth = None
+            object_depth_values = self.curr_depth[object_mask & np.isfinite(self.curr_depth) & (self.curr_depth > 0.1)]
+            if len(object_depth_values) > 0:
+                front_depth = float(np.percentile(object_depth_values, self.object_front_depth_percentile))
+            if object_idx < len(object_metadata):
+                source_bbox = object_metadata[object_idx].get("source_bbox")
+                if isinstance(source_bbox, (list, tuple)) and len(source_bbox) == 4:
+                    xmin, ymin, xmax, ymax = [int(v) for v in source_bbox]
+                    margin = self.collision_clearance_margin_px
+                    xmin = max(0, xmin - margin)
+                    ymin = max(0, ymin - margin)
+                    xmax = min(local_mask.shape[1] - 1, xmax + margin)
+                    ymax = min(local_mask.shape[0] - 1, ymax + margin)
+                    local_mask[ymin:ymax + 1, xmin:xmax + 1] = True
+                    if front_depth is not None:
+                        depth_near_target = (
+                            np.isfinite(self.curr_depth)
+                            & (self.curr_depth > 0.1)
+                            & (self.curr_depth <= (front_depth + self.collision_clearance_depth_band))
+                        )
+                        local_depth_clearance = np.zeros_like(local_mask, dtype=bool)
+                        local_depth_clearance[ymin:ymax + 1, xmin:xmax + 1] = True
+                        local_mask |= (local_depth_clearance & depth_near_target)
+
+            dilated = cv2.dilate(local_mask.astype(np.uint8) * 255, kernel, iterations=1) > 0
+            clearance_mask |= dilated
+
+        return clearance_mask
 
     def run(self):
         rate = rospy.Rate(30)
