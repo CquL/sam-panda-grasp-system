@@ -32,10 +32,15 @@ class WristVLMNode:
             if var in os.environ:
                 del os.environ[var]
 
-        # 屏蔽完代理后，再初始化 client
-        self.client = OpenAI(api_key=MY_API_KEY, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1")
-        if not MY_API_KEY:
-            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 功能将不可用。")
+        # 没有 API key 时不崩溃，节点保持存活并返回空框。
+        self.client = None
+        if MY_API_KEY:
+            self.client = OpenAI(
+                api_key=MY_API_KEY,
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+        else:
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 将返回空框。")
         
         # 订阅手腕相机画面
         rospy.Subscriber('/wrist_camera/color/image_raw', Image, self.image_cb, queue_size=1)
@@ -57,6 +62,11 @@ class WristVLMNode:
             self.pub_bbox.publish(Float32MultiArray(data=[])) # 发空数组代表失败
             return
             
+        if self.client is None:
+            rospy.logwarn("⚠️ 手腕 VLM 无可用 API key，本次触发返回空框。")
+            self.pub_bbox.publish(Float32MultiArray(data=[]))
+            return
+
         rospy.loginfo("📸 收到触发信号，召唤千问提取目标框...")
         img_cv = self.latest_image.copy()
         _, buffer = cv2.imencode('.jpg', img_cv)
