@@ -1035,8 +1035,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
@@ -1170,8 +1170,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
@@ -1305,8 +1305,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
@@ -1373,8 +1373,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
@@ -1441,8 +1441,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
@@ -1509,8 +1509,8 @@
           </geometry>
           <material>
             <script>
-              <uri>model://beer/materials/scripts</uri>
-              <uri>model://beer/materials/textures</uri>
+              <uri>model://Beer/materials/scripts</uri>
+              <uri>model://Beer/materials/textures</uri>
               <name>Beer/Diffuse</name>
             </script>
           </material>
