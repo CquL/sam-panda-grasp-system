@@ -38,7 +38,7 @@
 - File:
   `sam_vit_b_01ec64.pth`
 - Status:
-  未随仓库直接提供，因为文件超过 GitHub 常规单文件限制。
+  不写入普通 Git 历史，因为文件超过 GitHub 常规单文件限制；改为 GitHub Release 资产，并通过 `bash scripts/download_models.sh` 下载。
 
 ### Gazebo Scene Assets
 

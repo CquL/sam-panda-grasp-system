@@ -79,7 +79,7 @@ You may still need extra Franka / Gazebo packages depending on your machine and 
 - `third_party/graspnet-baseline/checkpoint-rs.tar`
   This file is already included in the export.
 - `sam_vit_b_01ec64.pth`
-  This file is **not** included and must be added manually.
+  This file is distributed as a GitHub Release asset. Download it with `scripts/download_models.sh`.
 
 ### Environment variables
 
@@ -91,7 +91,7 @@ source scripts/source_project_env.sh
 
 export ANYGRASP_PYTHON=/path/to/your/python
 export ROS_PYTHON_EXEC=/usr/bin/python3
-export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
+bash scripts/download_models.sh
 ```
 
 The default VLM provider is DashScope's OpenAI-compatible endpoint, and the default model is `qwen-vl-max`. Override `VLM_MODEL` in `.env` only if your account uses a different Qwen-VL model.
@@ -164,7 +164,8 @@ Symptom:
 
 Fix:
 
-- put the checkpoint in `src/sam_perception/models/`
+- run `bash scripts/download_models.sh`
+- or put the checkpoint in `src/sam_perception/models/`
 - or set `SAM_CHECKPOINT_PATH`
 
 ### Trap 2: GraspNet import fails

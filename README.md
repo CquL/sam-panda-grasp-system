@@ -37,7 +37,7 @@
 > 它已经达到了“结构完整、依赖链清晰、具备复现实验基础”的阶段，但距离“开箱即用”还差几个关键条件：
 >
 > 1. 目标机器需要提前具备 ROS / Gazebo / MoveIt / Franka 生态依赖。
-> 2. `sam_vit_b_01ec64.pth` 没有随仓库提供，需要用户自行放置。
+> 2. `sam_vit_b_01ec64.pth` 不放入普通 Git 历史，已作为 GitHub Release 资产提供，可用脚本下载。
 > 3. 仓库现在已经补上参考环境、兼容性矩阵和轻量 CI，但还没有做到 Docker / 一键安装。
 > 4. 还没有一份“干净机器从 `clone` 到 `roslaunch` 全链路成功”的正式验收记录。
 
@@ -254,7 +254,7 @@ source scripts/source_project_env.sh
 
 export ANYGRASP_PYTHON=/path/to/your/python
 export ROS_PYTHON_EXEC=/usr/bin/python3
-export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
+bash scripts/download_models.sh
 ```
 
 默认 VLM 后端是阿里云百炼 OpenAI-compatible 接口，默认模型是 `qwen-vl-max`。如需改模型，只改 `.env` 中的 `VLM_MODEL`。
