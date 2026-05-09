@@ -24,9 +24,14 @@ import base64
 import ast  # 💥 新增：用于安全解析 Python 的二维列表字符串
 
 # ==========================================
-# 🔑 从环境变量读取通义千问 / OpenAI 兼容 API Key
+# 🔑 从环境变量读取通义千问 API Key
 # ==========================================
-MY_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY")
+DASHSCOPE_BASE_URL = os.environ.get(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+VLM_MODEL = os.environ.get("VLM_MODEL", "qwen-vl-max")
 
 class QwenPlannerNode:
     def __init__(self):
@@ -41,11 +46,11 @@ class QwenPlannerNode:
                 del os.environ[var]
 
         self.client = OpenAI(
-            api_key=MY_API_KEY,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            api_key=DASHSCOPE_API_KEY,
+            base_url=DASHSCOPE_BASE_URL
         )
-        if not MY_API_KEY:
-            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，LLM 规划功能将不可用。")
+        if not DASHSCOPE_API_KEY:
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY，LLM 规划功能将不可用。")
         
         rospy.Subscriber('/camera/color/image_raw', Image, self.image_cb)
         self.pub_bbox = rospy.Publisher('/sam/prompt_bbox', Float32MultiArray, queue_size=10)
@@ -88,7 +93,7 @@ class QwenPlannerNode:
                 rospy.loginfo(f"正在向千问发送多目标检索请求: {user_cmd} ...")
                 
                 response = self.client.chat.completions.create(
-                    model="qwen-vl-max",
+                    model=VLM_MODEL,
                     messages=[
                         {
                             "role": "user",

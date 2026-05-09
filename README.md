@@ -247,11 +247,17 @@ roslaunch sam_perception system_new.launch launch_demo:=true
 ### 2. 准备关键环境变量
 
 ```bash
+cp .env.example .env
+# 编辑 .env，只需要填一个大模型 Key：
+# DASHSCOPE_API_KEY=你的阿里云百炼Key
+source scripts/source_project_env.sh
+
 export ANYGRASP_PYTHON=/path/to/your/python
 export ROS_PYTHON_EXEC=/usr/bin/python3
-export DASHSCOPE_API_KEY=your_key
 export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
 ```
+
+默认 VLM 后端是阿里云百炼 OpenAI-compatible 接口，默认模型是 `qwen-vl-max`。如需改模型，只改 `.env` 中的 `VLM_MODEL`。
 
 如果你的环境需要显式设置 `libffi` 预加载：
 

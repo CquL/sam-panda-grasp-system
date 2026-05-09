@@ -3,11 +3,16 @@ from openai import OpenAI
 import json
 
 class LLMPlannerCore:
-    def __init__(self, api_key=None, model="gpt-4o"): # 推荐用 4o 或者 qwen-vl
+    def __init__(self, api_key=None, model=None, base_url=None):
         """初始化大模型客户端"""
-        # 如果不传 api_key，就默认从环境变量找
-        self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
-        self.model = model
+        self.client = OpenAI(
+            api_key=api_key or os.environ.get("DASHSCOPE_API_KEY"),
+            base_url=base_url or os.environ.get(
+                "DASHSCOPE_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ),
+        )
+        self.model = model or os.environ.get("VLM_MODEL", "qwen-vl-max")
 
     def parse_user_command_to_bbox(self, user_command, scene_context=""):
         """

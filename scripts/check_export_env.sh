@@ -92,10 +92,10 @@ else
   warn "ROS_PYTHON_EXEC not set. Launch files will fall back to /usr/bin/python3"
 fi
 
-if [ -n "${DASHSCOPE_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
+if [ -n "${DASHSCOPE_API_KEY:-}" ]; then
   pass "VLM API key environment detected"
 else
-  warn "No DASHSCOPE_API_KEY or OPENAI_API_KEY detected. VLM nodes will not run."
+  warn "No DASHSCOPE_API_KEY detected. VLM nodes will return empty boxes or skip model calls."
 fi
 
 if [ -n "${ANYGRASP_LD_PRELOAD:-}" ]; then

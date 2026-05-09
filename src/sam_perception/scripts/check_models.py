@@ -5,14 +5,14 @@ import sys
 
 from openai import OpenAI
 
-DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY")
 DASHSCOPE_BASE_URL = os.environ.get(
     "DASHSCOPE_BASE_URL",
     "https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
 if not DASHSCOPE_API_KEY:
-    print("请先设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY。")
+    print("请先设置 DASHSCOPE_API_KEY。")
     sys.exit(1)
 
 # 将 OpenAI 的客户端地址指向阿里云百炼的兼容接口

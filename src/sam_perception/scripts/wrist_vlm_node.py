@@ -22,10 +22,13 @@ class WristVLMNode:
     def __init__(self):
         rospy.init_node('wrist_vlm_node')
         self.latest_image = None
-        self.model_name = rospy.get_param("~model", "qwen-vl-max")
-        self.base_url = rospy.get_param("~base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
+        self.base_url = rospy.get_param(
+            "~base_url",
+            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
         api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
         self.api_key = api_key_param or env_api_key
         
         # 💥 加入以下代码：强制屏蔽系统代理，防止 httpx 崩溃
@@ -42,7 +45,7 @@ class WristVLMNode:
                 base_url=self.base_url
             )
         else:
-            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 将返回空框。")
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY，手腕 VLM 将返回空框。")
         
         # 订阅手腕相机画面
         rospy.Subscriber('/wrist_camera/color/image_raw', Image, self.image_cb, queue_size=1)
@@ -71,7 +74,7 @@ class WristVLMNode:
             return
             
         if self.client is None:
-            rospy.logwarn("⚠️ 手腕 VLM 无可用 API key，本次触发返回空框。")
+            rospy.logwarn("⚠️ 手腕 VLM 无可用 DASHSCOPE_API_KEY，本次触发返回空框。")
             self.pub_bbox.publish(Float32MultiArray(data=[]))
             return
 

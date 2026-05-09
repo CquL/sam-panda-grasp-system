@@ -32,13 +32,13 @@ class GlobalVLMTargetNode:
         self.result_topic = rospy.get_param("~result_topic", "/vlm/global_target")
         self.snapshot_topic = rospy.get_param("~snapshot_topic", "/vlm/global_target_image")
         self.image_topic = rospy.get_param("~image_topic", "/camera/color/image_raw")
-        self.model_name = rospy.get_param("~model", "qwen-vl-max")
+        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
         self.base_url = rospy.get_param(
             "~base_url",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         )
         api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
         self.api_key = api_key_param or env_api_key
         self.max_boxes = max(1, int(rospy.get_param("~max_boxes", 4)))
 
@@ -50,7 +50,7 @@ class GlobalVLMTargetNode:
         if self.api_key:
             self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         else:
-            rospy.logwarn("Global VLM has no DASHSCOPE_API_KEY / OPENAI_API_KEY; commands will return empty boxes.")
+            rospy.logwarn("Global VLM has no DASHSCOPE_API_KEY; commands will return empty boxes.")
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         rospy.Subscriber(self.command_topic, String, self.command_cb, queue_size=1)

@@ -46,13 +46,13 @@ class SemanticRerankerNode:
         self.target_image_topic = rospy.get_param("~target_image_topic", "/vlm/global_target_image")
         self.object_metadata_topic = rospy.get_param("~object_metadata_topic", "/sam_perception/object_metadata")
         self.result_topic = rospy.get_param("~result_topic", "/vlm/semantic_rerank")
-        self.model_name = rospy.get_param("~model", "qwen-vl-max")
+        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
         self.base_url = rospy.get_param(
             "~base_url",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         )
         api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
         self.api_key = api_key_param or env_api_key
         self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 10.0))
         self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 1)))
@@ -103,7 +103,7 @@ class SemanticRerankerNode:
             )
         else:
             rospy.logwarn(
-                "semantic_reranker: no DASHSCOPE_API_KEY / OPENAI_API_KEY; semantic rerank will pass through raw grasps."
+                "semantic_reranker: no DASHSCOPE_API_KEY; semantic rerank will pass through raw grasps."
             )
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)

@@ -84,11 +84,17 @@ You may still need extra Franka / Gazebo packages depending on your machine and 
 ### Environment variables
 
 ```bash
+cp .env.example .env
+# Edit .env and set the single VLM key used by the whole system:
+# DASHSCOPE_API_KEY=your_dashscope_key
+source scripts/source_project_env.sh
+
 export ANYGRASP_PYTHON=/path/to/your/python
 export ROS_PYTHON_EXEC=/usr/bin/python3
-export DASHSCOPE_API_KEY=your_key
 export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
 ```
+
+The default VLM provider is DashScope's OpenAI-compatible endpoint, and the default model is `qwen-vl-max`. Override `VLM_MODEL` in `.env` only if your account uses a different Qwen-VL model.
 
 Optional:
 

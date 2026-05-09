@@ -34,6 +34,7 @@ Run these checks locally when possible:
 
 ```bash
 bash -n scripts/check_export_env.sh
+bash -n scripts/source_project_env.sh
 python3 -m py_compile \
   src/sam_perception/scripts/check_cam.py \
   src/sam_perception/scripts/check_models.py \

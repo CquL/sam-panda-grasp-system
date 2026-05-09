@@ -21,7 +21,9 @@ jobs:
           python-version: "3.9"
 
       - name: Validate shell syntax
-        run: bash -n scripts/check_export_env.sh
+        run: |
+          bash -n scripts/check_export_env.sh
+          bash -n scripts/source_project_env.sh
 
       - name: Validate Python syntax
         run: |
@@ -67,6 +69,7 @@ jobs:
           test -f environment/README.md
           test -f environment/anygrasp_env.reference.yml
           test -f requirements/anygrasp-reference.txt
+          test -f scripts/source_project_env.sh
 
       - name: Check for machine-local absolute paths under src
         run: |
