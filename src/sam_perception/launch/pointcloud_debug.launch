@@ -1,0 +1,99 @@
+<launch>
+  <arg name="launch_rviz" default="true" />
+  <arg name="show_windows" default="false" />
+  <arg name="show_projection_windows" default="$(arg show_windows)" />
+  <arg name="show_o3d_windows" default="true" />
+  <arg name="publish_projection_images" default="true" />
+  <arg name="save_snapshots" default="true" />
+  <arg name="save_interval_sec" default="4.0" />
+  <arg name="max_points" default="30000" />
+  <arg name="image_size" default="720" />
+  <arg name="o3d_point_size" default="3.5" />
+  <arg name="o3d_voxel_size" default="0.0" />
+  <arg name="o3d_white_background" default="true" />
+  <arg name="show_raw_o3d" default="false" />
+  <arg name="show_object_overview_o3d" default="true" />
+  <arg name="show_background_o3d" default="false" />
+  <arg name="show_bounding_box" default="false" />
+  <arg name="show_coordinate_frame" default="false" />
+  <arg name="show_raw_grasps" default="false" />
+  <arg name="show_corrected_grasps" default="false" />
+  <arg name="show_output_grasps" default="true" />
+  <arg name="display_grasp_top_n" default="6" />
+  <arg name="overview_grasp_top_n" default="4" />
+  <arg name="overview_use_rgb_texture" default="true" />
+  <arg name="focus_object_id" default="-1" />
+  <arg name="focus_selection_mode" default="largest" />
+  <arg name="show_focus_object" default="true" />
+  <arg name="show_focus_pure_object" default="$(arg show_focus_object)" />
+  <arg name="show_focus_overlay_object" default="$(arg show_focus_object)" />
+  <arg name="show_focus_pure_o3d" default="$(arg show_focus_pure_object)" />
+  <arg name="show_focus_overlay_o3d" default="$(arg show_focus_overlay_object)" />
+  <arg name="show_all_object_focus_windows" default="false" />
+  <arg name="show_all_object_focus_pure_o3d" default="$(arg show_all_object_focus_windows)" />
+  <arg name="show_all_object_focus_overlay_o3d" default="$(arg show_all_object_focus_windows)" />
+  <arg name="all_object_detail_max_windows" default="6" />
+  <arg name="focus_use_rgb_texture" default="true" />
+  <arg name="object_solid_color" default="true" />
+  <arg name="object_remove_outliers" default="true" />
+  <arg name="object_outlier_nb_neighbors" default="20" />
+  <arg name="object_outlier_std_ratio" default="1.2" />
+  <arg name="grasp_mesh_radius" default="0.0031" />
+  <arg name="grasp_center_radius" default="0.0062" />
+  <arg name="output_dir" default="$(env HOME)/grasp_robot_ws/pointcloud_debug" />
+  <arg name="raw_cloud_topic" default="/camera/depth/points" />
+  <arg name="object_cloud_topic" default="/sam_perception/object_cloud" />
+  <arg name="background_cloud_topic" default="/sam_perception/background_cloud" />
+
+  <node pkg="sam_perception" type="pointcloud_debugger.py" name="pointcloud_debugger" output="screen"
+        launch-prefix="/usr/bin/python3">
+    <param name="show_windows" value="$(arg show_windows)" />
+    <param name="show_projection_windows" value="$(arg show_projection_windows)" />
+    <param name="show_o3d_windows" value="$(arg show_o3d_windows)" />
+    <param name="publish_projection_images" value="$(arg publish_projection_images)" />
+    <param name="save_snapshots" value="$(arg save_snapshots)" />
+    <param name="save_interval_sec" value="$(arg save_interval_sec)" />
+    <param name="max_points" value="$(arg max_points)" />
+    <param name="image_size" value="$(arg image_size)" />
+    <param name="o3d_point_size" value="$(arg o3d_point_size)" />
+    <param name="o3d_voxel_size" value="$(arg o3d_voxel_size)" />
+    <param name="o3d_white_background" value="$(arg o3d_white_background)" />
+    <param name="show_raw_o3d" value="$(arg show_raw_o3d)" />
+    <param name="show_object_overview_o3d" value="$(arg show_object_overview_o3d)" />
+    <param name="show_background_o3d" value="$(arg show_background_o3d)" />
+    <param name="show_bounding_box" value="$(arg show_bounding_box)" />
+    <param name="show_coordinate_frame" value="$(arg show_coordinate_frame)" />
+    <param name="show_raw_grasps" value="$(arg show_raw_grasps)" />
+    <param name="show_corrected_grasps" value="$(arg show_corrected_grasps)" />
+    <param name="show_output_grasps" value="$(arg show_output_grasps)" />
+    <param name="display_grasp_top_n" value="$(arg display_grasp_top_n)" />
+    <param name="overview_grasp_top_n" value="$(arg overview_grasp_top_n)" />
+    <param name="overview_use_rgb_texture" value="$(arg overview_use_rgb_texture)" />
+    <param name="focus_object_id" value="$(arg focus_object_id)" />
+    <param name="focus_selection_mode" value="$(arg focus_selection_mode)" />
+    <param name="show_focus_object" value="$(arg show_focus_object)" />
+    <param name="show_focus_pure_object" value="$(arg show_focus_pure_object)" />
+    <param name="show_focus_overlay_object" value="$(arg show_focus_overlay_object)" />
+    <param name="show_focus_pure_o3d" value="$(arg show_focus_pure_o3d)" />
+    <param name="show_focus_overlay_o3d" value="$(arg show_focus_overlay_o3d)" />
+    <param name="show_all_object_focus_windows" value="$(arg show_all_object_focus_windows)" />
+    <param name="show_all_object_focus_pure_o3d" value="$(arg show_all_object_focus_pure_o3d)" />
+    <param name="show_all_object_focus_overlay_o3d" value="$(arg show_all_object_focus_overlay_o3d)" />
+    <param name="all_object_detail_max_windows" value="$(arg all_object_detail_max_windows)" />
+    <param name="focus_use_rgb_texture" value="$(arg focus_use_rgb_texture)" />
+    <param name="object_solid_color" value="$(arg object_solid_color)" />
+    <param name="object_remove_outliers" value="$(arg object_remove_outliers)" />
+    <param name="object_outlier_nb_neighbors" value="$(arg object_outlier_nb_neighbors)" />
+    <param name="object_outlier_std_ratio" value="$(arg object_outlier_std_ratio)" />
+    <param name="grasp_mesh_radius" value="$(arg grasp_mesh_radius)" />
+    <param name="grasp_center_radius" value="$(arg grasp_center_radius)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="raw_cloud_topic" value="$(arg raw_cloud_topic)" />
+    <param name="object_cloud_topic" value="$(arg object_cloud_topic)" />
+    <param name="background_cloud_topic" value="$(arg background_cloud_topic)" />
+  </node>
+
+  <node pkg="rviz" type="rviz" name="rviz_pointcloud_debug" output="screen"
+        args="-d $(find sam_perception)/rviz/pointcloud_debug.rviz"
+        if="$(arg launch_rviz)" />
+</launch>

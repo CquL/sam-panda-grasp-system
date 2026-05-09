@@ -93,7 +93,7 @@ export SAM_CHECKPOINT_PATH=/absolute/path/to/sam_vit_b_01ec64.pth
 Optional:
 
 ```bash
-export LIBFFI_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7
+export ANYGRASP_LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7
 export GRASPNET_ROOT=/absolute/path/to/graspnet-baseline
 ```
 

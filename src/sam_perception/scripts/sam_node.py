@@ -19,18 +19,17 @@ import tf.transformations as tft
 import tf2_ros
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, PointField
 from std_msgs.msg import Header, Float32MultiArray, String
-from cv_bridge import CvBridge
 from segment_anything import sam_model_registry, SamPredictor
 import open3d as o3d
 import sensor_msgs.point_cloud2 as pc2
 from std_srvs.srv import Empty, EmptyResponse
 from gazebo_msgs.srv import GetModelState
+from ros_image_compat import image_msg_to_numpy
 
 class SAMPerceptionNode:
     def __init__(self):
         rospy.init_node('sam_perception_node')
         self.debug_o3d = rospy.get_param("~debug_o3d", False)
-        self.bridge = CvBridge()
         self.save_thesis_figures = rospy.get_param("~save_thesis_figures", False)
         self.figure_output_dir = os.path.expanduser(
             rospy.get_param("~figure_output_dir", "~/grasp_robot_ws/thesis_figures")
@@ -95,7 +94,11 @@ class SAMPerceptionNode:
         )
         
         package_path = os.path.dirname(os.path.dirname(__file__))
-        checkpoint = os.path.join(package_path, "models", "sam_vit_b_01ec64.pth")
+        default_checkpoint = os.environ.get(
+            "SAM_CHECKPOINT_PATH",
+            os.path.join(package_path, "models", "sam_vit_b_01ec64.pth"),
+        )
+        checkpoint = rospy.get_param("~checkpoint_path", default_checkpoint)
         
         if not os.path.exists(checkpoint):
             rospy.logerr(f"❌ 找不到权重文件: {checkpoint}")
@@ -169,15 +172,27 @@ class SAMPerceptionNode:
 
     def rgb_callback(self, msg):
         try:
-            self.curr_rgb = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception:
-            pass
+            self.curr_rgb = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
+            self.curr_rgb = None
+            rospy.logerr_throttle(
+                5.0,
+                "sam_perception_node RGB conversion failed (encoding=%s): %s",
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def depth_callback(self, msg):
         try:
-            self.curr_depth = self.bridge.imgmsg_to_cv2(msg, "32FC1")
-        except Exception:
-            pass
+            self.curr_depth = image_msg_to_numpy(msg, "32FC1")
+        except Exception as exc:
+            self.curr_depth = None
+            rospy.logerr_throttle(
+                5.0,
+                "sam_perception_node depth conversion failed (encoding=%s): %s",
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -195,7 +210,12 @@ class SAMPerceptionNode:
     def cmd_callback(self, msg):
         """处理来自 LLM 的多目标坐标指令"""
         data = msg.data
-        if len(data) % 4 != 0 or len(data) == 0:
+        if len(data) == 0:
+            rospy.logwarn("⚠️ 本次未收到目标框（VLM 可能未识别到目标），已跳过分割。")
+            self.target_boxes = []
+            self.should_process = False
+            return
+        if len(data) % 4 != 0:
             rospy.logerr(f"❌ 收到无效的 BBox 数组，长度 {len(data)} 不是 4 的倍数！")
             return
             

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import re
@@ -17,20 +18,16 @@ import cv2
 import numpy as np
 import rospy
 import tf.transformations as tft
-from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseArray
 from openai import OpenAI
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Float32MultiArray, String
-
-
-DEFAULT_API_KEY = "sk-a85a76a8ada94ef2886ecd43bf0f9e80"
+from ros_image_compat import image_msg_to_numpy
 
 
 class SemanticRerankerNode:
     def __init__(self):
         rospy.init_node("semantic_reranker")
-        self.bridge = CvBridge()
         self.latest_image = None
         self.target_image = None
         self.intrinsics = None
@@ -54,11 +51,17 @@ class SemanticRerankerNode:
             "~base_url",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
+        api_key_param = str(rospy.get_param("~api_key", "")).strip()
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key_param or env_api_key
+        self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 10.0))
+        self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 1)))
+        self.vlm_parallel_workers = max(1, int(rospy.get_param("~vlm_parallel_workers", 2)))
         self.max_candidates_per_object = max(1, int(rospy.get_param("~max_candidates_per_object", 3)))
         self.overview_candidates_per_object = max(1, int(rospy.get_param("~overview_candidates_per_object", 15)))
         self.crop_margin_px = max(20, int(rospy.get_param("~crop_margin_px", 40)))
         self.axis_length = float(rospy.get_param("~axis_length", 0.04))
+        self.center_offset_weight = float(rospy.get_param("~center_offset_weight", 0.18))
         self.gripper_width_max = float(rospy.get_param("~gripper_width_max", 0.078))
         self.gripper_width_margin = float(rospy.get_param("~gripper_width_margin", 0.002))
         self.strict_width_filter = bool(rospy.get_param("~strict_width_filter", True))
@@ -66,19 +69,42 @@ class SemanticRerankerNode:
         self.save_candidate_crop = bool(rospy.get_param("~save_candidate_crop", True))
         self.save_candidate_json = bool(rospy.get_param("~save_candidate_json", True))
         self.candidate_debug_dir = os.path.expanduser(
-            rospy.get_param("~candidate_debug_dir", "~/grasp_robot_ws/semantic_rerank_debug")
+            rospy.get_param(
+                "~candidate_debug_dir",
+                os.environ.get("SEMANTIC_RERANK_DEBUG_DIR", "~/grasp_robot_ws/semantic_rerank_debug"),
+            )
         )
         self.visualize_global_overview = bool(rospy.get_param("~visualize_global_overview", True))
         self.save_global_overview = bool(rospy.get_param("~save_global_overview", True))
         self.global_overview_dir = os.path.expanduser(
-            rospy.get_param("~global_overview_dir", "~/grasp_robot_ws/semantic_rerank_overview")
+            rospy.get_param(
+                "~global_overview_dir",
+                os.environ.get("SEMANTIC_RERANK_OVERVIEW_DIR", "~/grasp_robot_ws/semantic_rerank_overview"),
+            )
         )
+        if self.vlm_parallel_workers > 1 and self.visualize_candidate_crop:
+            rospy.logwarn(
+                "semantic_reranker: vlm_parallel_workers=%d 时，禁用实时候选窗口显示以避免多线程 OpenCV 冲突。",
+                self.vlm_parallel_workers,
+            )
+            self.visualize_candidate_crop = False
 
         proxy_vars = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]
         for var in proxy_vars:
             os.environ.pop(var, None)
 
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = None
+        if self.api_key:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.vlm_timeout_sec,
+                max_retries=self.vlm_max_retries,
+            )
+        else:
+            rospy.logwarn(
+                "semantic_reranker: no DASHSCOPE_API_KEY / OPENAI_API_KEY; semantic rerank will pass through raw grasps."
+            )
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         rospy.Subscriber(self.camera_info_topic, CameraInfo, self.camera_info_cb, queue_size=1)
@@ -93,18 +119,27 @@ class SemanticRerankerNode:
         self.pub_result = rospy.Publisher(self.result_topic, String, queue_size=1)
 
         rospy.loginfo(
-            "Semantic reranker ready. input=(%s,%s) output=(%s,%s)",
+            "Semantic reranker ready. input=(%s,%s) output=(%s,%s), timeout=%.1fs retries=%d",
             self.pose_topic,
             self.info_topic,
             self.out_pose_topic,
             self.out_info_topic,
+            self.vlm_timeout_sec,
+            self.vlm_max_retries,
         )
 
     def image_cb(self, msg):
         try:
-            self.latest_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception:
+            self.latest_image = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
             self.latest_image = None
+            rospy.logerr_throttle(
+                5.0,
+                "semantic_reranker image conversion failed for %s (encoding=%s): %s",
+                self.image_topic,
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def camera_info_cb(self, msg):
         try:
@@ -114,9 +149,16 @@ class SemanticRerankerNode:
 
     def target_image_cb(self, msg):
         try:
-            self.target_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception:
+            self.target_image = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
             self.target_image = None
+            rospy.logerr_throttle(
+                5.0,
+                "semantic_reranker target image conversion failed for %s (encoding=%s): %s",
+                self.target_image_topic,
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def target_cb(self, msg):
         try:
@@ -160,7 +202,24 @@ class SemanticRerankerNode:
         self.pending_pose_msg = None
         self.pending_info_msg = None
 
-        reordered_pose_msg, reordered_info_msg, debug_payload = self.rerank_batch(pose_msg, info_msg)
+        debug_payload = None
+        try:
+            reordered_pose_msg, reordered_info_msg, debug_payload = self.rerank_batch(pose_msg, info_msg)
+        except Exception as exc:
+            rospy.logerr(
+                "semantic_reranker 处理异常，已回退透传 raw 候选: %s",
+                exc,
+            )
+            reordered_pose_msg = pose_msg
+            reordered_info_msg = info_msg
+            debug_payload = {
+                "ok": False,
+                "target": "",
+                "command": "",
+                "objects": [],
+                "reason": "rerank_exception_fallback_raw",
+            }
+
         self.pub_pose.publish(reordered_pose_msg)
         self.pub_info.publish(reordered_info_msg)
         rospy.loginfo(
@@ -202,15 +261,60 @@ class SemanticRerankerNode:
         debug_payload["command"] = self.latest_target.get("command", "")
         debug_payload["overview_items"] = []
 
-        new_order = []
+        object_plan = []
         for object_id in sorted(object_groups.keys()):
             indices = object_groups[object_id]
             bbox = self.lookup_bbox_for_object(object_id)
+            object_plan.append((object_id, indices, bbox))
+
+        rank_targets = [(object_id, indices, bbox) for object_id, indices, bbox in object_plan if bbox is not None]
+        rank_results = {}
+        if self.vlm_parallel_workers > 1 and len(rank_targets) > 1:
+            worker_count = min(self.vlm_parallel_workers, len(rank_targets))
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_map = {
+                    executor.submit(
+                        self.rank_object_candidates,
+                        object_id,
+                        bbox,
+                        indices,
+                        pose_msg,
+                        data,
+                        info_stride,
+                    ): (object_id, indices)
+                    for object_id, indices, bbox in rank_targets
+                }
+                for future in as_completed(future_map):
+                    object_id, indices = future_map[future]
+                    try:
+                        rank_results[object_id] = future.result()
+                    except Exception as exc:
+                        rospy.logwarn(
+                            "semantic_reranker: 目标 %s 并行重排失败，回退 raw 顺序: %s",
+                            str(object_id),
+                            exc,
+                        )
+                        rank_results[object_id] = None
+        else:
+            for object_id, indices, bbox in rank_targets:
+                try:
+                    rank_results[object_id] = self.rank_object_candidates(
+                        object_id, bbox, indices, pose_msg, data, info_stride
+                    )
+                except Exception as exc:
+                    rospy.logwarn(
+                        "semantic_reranker: 目标 %s 重排失败，回退 raw 顺序: %s",
+                        str(object_id),
+                        exc,
+                    )
+                    rank_results[object_id] = None
+
+        new_order = []
+        for object_id, indices, bbox in object_plan:
             if bbox is None:
                 new_order.extend(indices)
                 continue
-
-            rank_result = self.rank_object_candidates(object_id, bbox, indices, pose_msg, data, info_stride)
+            rank_result = rank_results.get(object_id)
             if rank_result is None:
                 new_order.extend(indices)
                 continue
@@ -365,12 +469,23 @@ class SemanticRerankerNode:
             return None
 
         semantic_vector = result.get("semantic_scores", [])
+        center_offset_map = {
+            int(item["candidate_index"]): float(item.get("center_offset_px", 0.0))
+            for item in candidate_meta
+        }
+        max_center_offset = max(center_offset_map.values()) if center_offset_map else 0.0
         chosen_scores = {}
         for local_idx, candidate_idx in enumerate(visible_indices):
-            score = 0.0
+            semantic_score = 0.0
             if local_idx < len(semantic_vector):
-                score = self.safe_float(semantic_vector[local_idx])
-            chosen_scores[candidate_idx] = score
+                semantic_score = self.safe_float(semantic_vector[local_idx])
+            center_bonus = 0.0
+            if max_center_offset > 1e-6:
+                center_bonus = 1.0 - min(
+                    1.0,
+                    float(center_offset_map.get(int(candidate_idx), max_center_offset)) / float(max_center_offset),
+                )
+            chosen_scores[candidate_idx] = float(semantic_score + self.center_offset_weight * center_bonus)
 
         ordered_indices = sorted(
             indices,
@@ -540,6 +655,9 @@ class SemanticRerankerNode:
         return crop, labels, visible_indices, candidate_meta
 
     def query_vlm_for_candidates(self, crop_image, labels, candidate_meta):
+        if self.client is None:
+            return None
+
         ok, buffer = cv2.imencode(".jpg", crop_image)
         if not ok:
             return None
@@ -592,6 +710,7 @@ class SemanticRerankerNode:
                     }
                 ],
                 temperature=0.0,
+                timeout=self.vlm_timeout_sec,
             )
         except Exception as exc:
             rospy.logerr("Semantic reranker VLM request failed: %s", exc)

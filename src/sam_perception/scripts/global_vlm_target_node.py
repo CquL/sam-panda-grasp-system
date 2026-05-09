@@ -15,20 +15,17 @@ sys.path = [p for p in sys.path if "/usr/lib/python3/dist-packages" not in p]
 
 import cv2
 import rospy
-from cv_bridge import CvBridge
 from openai import OpenAI
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray, String
-
-
-DEFAULT_API_KEY = "sk-a85a76a8ada94ef2886ecd43bf0f9e80"
+from ros_image_compat import image_msg_to_numpy, numpy_to_image_msg
 
 
 class GlobalVLMTargetNode:
     def __init__(self):
         rospy.init_node("global_vlm_target_node")
-        self.bridge = CvBridge()
         self.latest_image = None
+        self.last_result_text = ""
 
         self.command_topic = rospy.get_param("~command_topic", "/vlm/task_command")
         self.bbox_topic = rospy.get_param("~bbox_topic", "/sam/prompt_bbox")
@@ -40,14 +37,20 @@ class GlobalVLMTargetNode:
             "~base_url",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
+        api_key_param = str(rospy.get_param("~api_key", "")).strip()
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key_param or env_api_key
         self.max_boxes = max(1, int(rospy.get_param("~max_boxes", 4)))
 
         proxy_vars = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]
         for var in proxy_vars:
             os.environ.pop(var, None)
 
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = None
+        if self.api_key:
+            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        else:
+            rospy.logwarn("Global VLM has no DASHSCOPE_API_KEY / OPENAI_API_KEY; commands will return empty boxes.")
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         rospy.Subscriber(self.command_topic, String, self.command_cb, queue_size=1)
@@ -64,9 +67,16 @@ class GlobalVLMTargetNode:
 
     def image_cb(self, msg):
         try:
-            self.latest_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception:
+            self.latest_image = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
             self.latest_image = None
+            rospy.logerr_throttle(
+                5.0,
+                "Global VLM image conversion failed for %s (encoding=%s): %s",
+                self.image_topic,
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def command_cb(self, msg):
         command = msg.data.strip()
@@ -82,15 +92,31 @@ class GlobalVLMTargetNode:
             self.publish_failure(command, "no_image")
             return
 
+        if self.client is None:
+            rospy.logwarn("Global VLM has no API key, cannot process command: %s", command)
+            self.publish_failure(command, "missing_api_key")
+            self.pub_bbox.publish(Float32MultiArray(data=[]))
+            return
+
         rospy.loginfo("Global VLM processing command: %s", command)
         result = self.query_vlm(command, self.latest_image)
         if result is None:
+            preview = (self.last_result_text or "").replace("\n", " ").strip()
+            if len(preview) > 240:
+                preview = preview[:240] + "..."
+            rospy.logwarn(
+                "Global VLM parse failed for command=%s, raw_preview=%s",
+                command,
+                preview if preview else "<empty>",
+            )
             self.publish_failure(command, "vlm_parse_failed")
             self.pub_bbox.publish(Float32MultiArray(data=[]))
             return
 
         entries = self.normalize_entries(result, self.latest_image.shape[1], self.latest_image.shape[0], command)
         boxes = [entry["bbox"] for entry in entries]
+        if len(boxes) == 0:
+            rospy.logwarn("Global VLM produced zero valid bboxes after sanitize. result_keys=%s", list(result.keys()))
         target_names = [entry["target"] for entry in entries]
         target = "、".join(target_names) if target_names else (str(result.get("target", command)).strip() or command)
         confidence = self.safe_float(result.get("confidence", 0.0))
@@ -108,8 +134,7 @@ class GlobalVLMTargetNode:
         self.pub_bbox.publish(Float32MultiArray(data=flat_coords))
         self.pub_result.publish(String(data=json.dumps(payload, ensure_ascii=False)))
         try:
-            snapshot_msg = self.bridge.cv2_to_imgmsg(self.latest_image, "bgr8")
-            snapshot_msg.header.stamp = rospy.Time.now()
+            snapshot_msg = numpy_to_image_msg(self.latest_image, "bgr8", stamp=rospy.Time.now())
             self.pub_snapshot.publish(snapshot_msg)
         except Exception as exc:
             rospy.logwarn("Global VLM snapshot publish failed: %s", exc)
@@ -185,6 +210,7 @@ class GlobalVLMTargetNode:
             return None
 
         result_text = response.choices[0].message.content
+        self.last_result_text = str(result_text)
         parsed = self.parse_json_result(result_text)
         if parsed is not None:
             return parsed
@@ -200,13 +226,63 @@ class GlobalVLMTargetNode:
         return None
 
     def parse_json_result(self, result_text):
-        match = re.search(r"\{.*\}", result_text, re.DOTALL)
-        if not match:
+        if result_text is None:
             return None
+
+        text = str(result_text).strip()
+        if not text:
+            return None
+
+        # 1) direct parse
         try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+            parsed = json.loads(text)
+            normalized = self.normalize_parsed_payload(parsed)
+            if normalized is not None:
+                return normalized
+        except Exception:
+            pass
+
+        # 2) parse fenced code blocks first
+        code_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+        for block in code_blocks:
+            block = block.strip()
+            if not block:
+                continue
+            try:
+                parsed = json.loads(block)
+                normalized = self.normalize_parsed_payload(parsed)
+                if normalized is not None:
+                    return normalized
+            except Exception:
+                pass
+
+        # 3) scan for any decodable JSON object / array inside mixed text
+        decoder = json.JSONDecoder()
+        for idx, ch in enumerate(text):
+            if ch not in "{[":
+                continue
+            try:
+                parsed, _ = decoder.raw_decode(text[idx:])
+            except Exception:
+                continue
+            normalized = self.normalize_parsed_payload(parsed)
+            if normalized is not None:
+                return normalized
+        return None
+
+    def normalize_parsed_payload(self, parsed):
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            if len(parsed) == 0:
+                return {"bboxes": [], "confidence": 0.0}
+            # [[xmin,ymin,xmax,ymax], ...]
+            if all(isinstance(item, (list, tuple)) and len(item) == 4 for item in parsed):
+                return {"bboxes": parsed, "confidence": 0.0}
+            # [{"name": "...", "bbox": [...]}, ...]
+            if all(isinstance(item, dict) for item in parsed):
+                return {"targets": parsed, "confidence": 0.0}
+        return None
 
     def sanitize_boxes(self, boxes, image_w, image_h):
         sanitized = []
@@ -217,9 +293,22 @@ class GlobalVLMTargetNode:
             if not isinstance(box, (list, tuple)) or len(box) != 4:
                 continue
             try:
-                xmin, ymin, xmax, ymax = [int(float(v)) for v in box]
+                vals = [float(v) for v in box]
             except Exception:
                 continue
+
+            # Handle normalized xyxy in [0, 1].
+            if all(-1e-6 <= v <= 1.0 + 1e-6 for v in vals):
+                vals = [vals[0] * image_w, vals[1] * image_h, vals[2] * image_w, vals[3] * image_h]
+
+            xmin, ymin, xmax, ymax = vals
+            # Fallback: if model returned xywh style.
+            if xmax <= xmin or ymax <= ymin:
+                x, y, w, h = vals
+                if w > 0 and h > 0:
+                    xmin, ymin, xmax, ymax = x, y, x + w, y + h
+
+            xmin, ymin, xmax, ymax = [int(round(v)) for v in [xmin, ymin, xmax, ymax]]
 
             xmin = max(0, min(image_w - 1, xmin))
             ymin = max(0, min(image_h - 1, ymin))
@@ -239,10 +328,37 @@ class GlobalVLMTargetNode:
                     continue
                 target_name = str(item.get("name", default_target)).strip() or default_target
                 bbox = item.get("bbox")
+                if isinstance(bbox, dict):
+                    # Accept bbox dict outputs with common key names.
+                    keys = [("xmin", "ymin", "xmax", "ymax"), ("x1", "y1", "x2", "y2"), ("left", "top", "right", "bottom")]
+                    for kx1, ky1, kx2, ky2 in keys:
+                        if all(k in bbox for k in [kx1, ky1, kx2, ky2]):
+                            bbox = [bbox[kx1], bbox[ky1], bbox[kx2], bbox[ky2]]
+                            break
                 sanitized = self.sanitize_boxes([bbox], image_w, image_h)
                 if not sanitized:
                     continue
                 entries.append({"target": target_name, "bbox": sanitized[0]})
+
+        if entries:
+            return entries
+
+        bbox = result.get("bbox")
+        if bbox is not None:
+            if isinstance(bbox, dict):
+                keys = [
+                    ("xmin", "ymin", "xmax", "ymax"),
+                    ("x1", "y1", "x2", "y2"),
+                    ("left", "top", "right", "bottom"),
+                ]
+                for kx1, ky1, kx2, ky2 in keys:
+                    if all(k in bbox for k in [kx1, ky1, kx2, ky2]):
+                        bbox = [bbox[kx1], bbox[ky1], bbox[kx2], bbox[ky2]]
+                        break
+            target_name = str(result.get("name", result.get("target", default_target))).strip() or default_target
+            boxes = self.sanitize_boxes([bbox], image_w, image_h)
+            for box in boxes:
+                entries.append({"target": target_name, "bbox": box})
 
         if entries:
             return entries

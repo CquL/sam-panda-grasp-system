@@ -37,9 +37,15 @@ bash -n scripts/check_export_env.sh
 python3 -m py_compile \
   src/sam_perception/scripts/check_cam.py \
   src/sam_perception/scripts/check_models.py \
+  src/sam_perception/scripts/experiment_logger.py \
+  src/sam_perception/scripts/global_vlm_target_node.py \
   src/sam_perception/scripts/grasp_from_sam.py \
   src/sam_perception/scripts/llm_planner.py \
+  src/sam_perception/scripts/pointcloud_debugger.py \
+  src/sam_perception/scripts/ros_image_compat.py \
   src/sam_perception/scripts/sam_node.py \
+  src/sam_perception/scripts/semantic_reranker.py \
+  src/sam_perception/scripts/task_command_cli.py \
   src/sam_perception/scripts/wrist_vlm_node.py \
   src/sam_perception/src/sam_perception/core_grasp.py \
   src/sam_perception/src/sam_perception/core_llm.py \
@@ -56,9 +62,16 @@ grep -R -nE '/home/[^/]+/' \
   src/sam_perception \
   src/panda_moveit_config \
   src/panda_pick_place
+grep -R -nE \
+  --exclude-dir=.git \
+  --exclude='*.svg' \
+  --exclude='*.png' \
+  --exclude='*.jpg' \
+  --exclude='*.jpeg' \
+  'sk-[A-Za-z0-9_-]{16,}' .
 ```
 
-The final `grep` should return nothing.
+Both final `grep` commands should return nothing.
 
 ## Documentation Standard
 

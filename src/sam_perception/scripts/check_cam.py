@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import cv2
 
 def list_cameras(max_check=10):

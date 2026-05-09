@@ -1,6 +1,5 @@
 <launch>
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
   <node pkg="sam_perception" type="check_models.py" name="check_models" output="screen"
-        launch-prefix="$(arg anygrasp_python)">
+        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
   </node>
 </launch>

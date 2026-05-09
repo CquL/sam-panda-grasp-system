@@ -1,8 +1,15 @@
 <launch>
+  <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY)" />
+  <arg name="vlm_model" default="$(optenv VLM_MODEL qwen-vl-max)" />
+  <arg name="vlm_base_url" default="$(optenv DASHSCOPE_BASE_URL https://dashscope.aliyuncs.com/compatible-mode/v1)" />
+  <arg name="launch_wrist_grasp_refiner" default="false" />
+  <arg name="use_wrist_grasp_refinement" default="false" />
+
   <include file="$(find sam_perception)/launch/system_new.launch">
     <arg name="launch_demo" value="true" />
     <arg name="launch_scheduler" value="true" />
     <arg name="launch_wrist_vlm" value="true" />
+    <arg name="launch_wrist_grasp_refiner" value="$(arg launch_wrist_grasp_refiner)" />
     <arg name="launch_global_vlm" value="true" />
     <arg name="launch_semantic_reranker" value="false" />
     <arg name="launch_experiment_logger" value="true" />
@@ -11,6 +18,10 @@
     <arg name="semantic_weight" value="0.0" />
     <arg name="use_iterative_wrist_alignment" value="false" />
     <arg name="use_final_wrist_alignment" value="false" />
+    <arg name="use_wrist_grasp_refinement" value="$(arg use_wrist_grasp_refinement)" />
     <arg name="refresh_collision_after_each_place" value="false" />
+    <arg name="vlm_api_key" value="$(arg vlm_api_key)" />
+    <arg name="vlm_model" value="$(arg vlm_model)" />
+    <arg name="vlm_base_url" value="$(arg vlm_base_url)" />
   </include>
 </launch>

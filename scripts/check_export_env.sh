@@ -98,14 +98,14 @@ else
   warn "No DASHSCOPE_API_KEY or OPENAI_API_KEY detected. VLM nodes will not run."
 fi
 
-if [ -n "${LIBFFI_PRELOAD:-}" ]; then
-  if [ -f "$LIBFFI_PRELOAD" ]; then
-    pass "LIBFFI_PRELOAD points to existing file"
+if [ -n "${ANYGRASP_LD_PRELOAD:-}" ]; then
+  if [ -f "$ANYGRASP_LD_PRELOAD" ]; then
+    pass "ANYGRASP_LD_PRELOAD points to existing file"
   else
-    warn "LIBFFI_PRELOAD is set but file does not exist: $LIBFFI_PRELOAD"
+    warn "ANYGRASP_LD_PRELOAD is set but file does not exist: $ANYGRASP_LD_PRELOAD"
   fi
 else
-  warn "LIBFFI_PRELOAD not set. This is fine unless your environment specifically requires it."
+  warn "ANYGRASP_LD_PRELOAD not set. This is fine unless your environment specifically requires it."
 fi
 
 echo

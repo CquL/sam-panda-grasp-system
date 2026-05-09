@@ -1,20 +1,28 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
+import sys
+
 from openai import OpenAI
 
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+DASHSCOPE_BASE_URL = os.environ.get(
+    "DASHSCOPE_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+
+if not DASHSCOPE_API_KEY:
+    print("请先设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY。")
+    sys.exit(1)
 
 # 将 OpenAI 的客户端地址指向阿里云百炼的兼容接口
 client = OpenAI(
     api_key=DASHSCOPE_API_KEY,
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+    base_url=DASHSCOPE_BASE_URL,
 )
 
 print("正在向阿里云百炼请求可用模型列表...\n")
 try:
-    if not DASHSCOPE_API_KEY:
-        raise RuntimeError("请先设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
-
     # 调用标准接口获取模型列表
     models_page = client.models.list()
     

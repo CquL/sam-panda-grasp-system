@@ -16,15 +16,17 @@ import re
 from openai import OpenAI
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Float32MultiArray
-from cv_bridge import CvBridge
-
-MY_API_KEY = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+from ros_image_compat import image_msg_to_numpy
 
 class WristVLMNode:
     def __init__(self):
         rospy.init_node('wrist_vlm_node')
-        self.bridge = CvBridge()
         self.latest_image = None
+        self.model_name = rospy.get_param("~model", "qwen-vl-max")
+        self.base_url = rospy.get_param("~base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        api_key_param = str(rospy.get_param("~api_key", "")).strip()
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key_param or env_api_key
         
         # 💥 加入以下代码：强制屏蔽系统代理，防止 httpx 崩溃
         proxy_vars = ['http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']
@@ -34,10 +36,10 @@ class WristVLMNode:
 
         # 没有 API key 时不崩溃，节点保持存活并返回空框。
         self.client = None
-        if MY_API_KEY:
+        if self.api_key:
             self.client = OpenAI(
-                api_key=MY_API_KEY,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                api_key=self.api_key,
+                base_url=self.base_url
             )
         else:
             rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 将返回空框。")
@@ -53,9 +55,15 @@ class WristVLMNode:
 
     def image_cb(self, msg):
         try:
-            self.latest_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except:
-            pass
+            self.latest_image = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
+            self.latest_image = None
+            rospy.logerr_throttle(
+                5.0,
+                "wrist_vlm_node image conversion failed (encoding=%s): %s",
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def trigger_cb(self, msg):
         if self.latest_image is None:
@@ -76,7 +84,7 @@ class WristVLMNode:
         
         try:
             res = self.client.chat.completions.create(
-                model="qwen-vl-max",
+                model=self.model_name,
                 messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}, {"type": "text", "text": prompt}]}],
                 temperature=0.0
             )

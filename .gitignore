@@ -3,6 +3,11 @@ devel/
 install/
 logs/
 log/
+experiment_results/
+pointcloud_debug/
+semantic_rerank_debug/
+semantic_rerank_overview/
+thesis_figures/
 .catkin_tools/
 .idea/
 .vscode/
@@ -18,6 +23,13 @@ __pycache__/
 src/sam_perception/models/*.pth
 src/sam_perception/models/*.pt
 src/sam_perception/models/*.ckpt
+*.onnx
+*.engine
+*.weights
 
 # ROS runtime artifacts
 *.bag
+*.pcd
+*.ply
+*.npy
+*.npz

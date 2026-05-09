@@ -1,13 +1,225 @@
 <launch>
+  <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY)" />
+  <arg name="vlm_model" default="$(optenv VLM_MODEL qwen-vl-max)" />
+  <arg name="vlm_base_url" default="$(optenv DASHSCOPE_BASE_URL https://dashscope.aliyuncs.com/compatible-mode/v1)" />
+  <arg name="save_thesis_figures" default="false" />
+  <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
+  <arg name="center_penalty_weight" default="1.5" />
+  <arg name="semantic_center_offset_weight" default="0.18" />
+  <arg name="use_iterative_wrist_alignment" default="false" />
+  <arg name="use_final_wrist_alignment" default="false" />
+  <arg name="wrist_alignment_allow_vertical" default="false" />
+  <arg name="launch_wrist_grasp_refiner" default="false" />
+  <arg name="use_wrist_grasp_refinement" default="false" />
+  <arg name="wrist_visibility_fallback_max_insert" default="0.09" />
+  <arg name="wrist_insert_allow_shorten" default="false" />
+  <arg name="simple_front_grasp_mode" default="true" />
+  <arg name="simple_front_insert_extra_depth" default="0.010" />
+  <arg name="simple_front_extra_retreat" default="0.080" />
+  <arg name="grasp_pose_approach_axis" default="+z" />
+  <arg name="grasp_pose_open_axis" default="+x" />
+  <arg name="use_grasp_pose_open_axis_orientation" default="false" />
+  <arg name="allow_raw_grasp_pose_orientation" default="false" />
+  <arg name="enforce_horizontal_gripper_open_axis" default="true" />
+  <arg name="max_gripper_open_axis_vertical_component" default="0.25" />
+  <arg name="insert_distance_over_back_cap" default="0.08" />
+  <arg name="insert_distance_absolute_max" default="0.20" />
+  <arg name="wrist_alignment_target_hand_x" default="0.0" />
+  <arg name="wrist_alignment_target_hand_y" default="0.0" />
+  <arg name="wrist_alignment_target_hand_z" default="0.0" />
+  <arg name="grasp_transport_mode" default="force_only" />
+  <arg name="enable_gazebo_attach" default="false" />
+  <arg name="enable_attached_collision_object" default="false" />
+  <arg name="gazebo_attach_distance_threshold" default="0.18" />
+  <arg name="gazebo_attach_link_name" default="panda_link8" />
+  <arg name="grasp_force" default="50.0" />
+  <arg name="grasp_width_margin" default="0.008" />
+  <arg name="grasp_width_margin_ratio" default="0.060" />
+  <arg name="grasp_command_width_min" default="0.008" />
+  <arg name="grasp_command_width_max" default="0.078" />
+  <arg name="grasp_probe_retreat_distance" default="0.0" />
+  <arg name="grasp_probe_wait_sec" default="0.10" />
+  <arg name="post_grasp_lift_distance" default="0.015" />
+  <arg name="enable_grasp_resqueeze_retry" default="true" />
+  <arg name="grasp_resqueeze_extra_margin" default="0.006" />
+  <arg name="grasp_resqueeze_force_boost" default="10.0" />
+  <arg name="grasp_empty_close_threshold" default="0.010" />
+  <arg name="grasp_epsilon_inner" default="0.030" />
+  <arg name="grasp_epsilon_outer" default="0.030" />
+  <arg name="close_extra_shrink" default="0.004" />
+  <arg name="close_width_floor" default="0.006" />
+  <arg name="soft_grasp_width_tolerance" default="0.030" />
+  <arg name="soft_grasp_under_width_tolerance" default="0.018" />
+  <arg name="soft_grasp_over_width_tolerance" default="0.008" />
+  <arg name="soft_grasp_min_width" default="0.035" />
+  <arg name="soft_grasp_max_width" default="0.078" />
+  <arg name="force_grasp_verify_after_close" default="true" />
+  <arg name="force_grasp_verify_after_retreat" default="true" />
+  <arg name="force_grasp_verify_wait_sec" default="0.25" />
+  <arg name="gazebo_functional_grasp_verify" default="true" />
+  <arg name="gazebo_functional_grasp_max_object_to_ee" default="0.14" />
+  <arg name="gazebo_functional_grasp_min_object_motion" default="0.015" />
+  <arg name="gazebo_functional_grasp_min_follow_ratio" default="0.35" />
+  <arg name="gazebo_functional_grasp_probe_min_object_motion" default="0.006" />
+  <arg name="gazebo_functional_grasp_probe_min_follow_ratio" default="0.30" />
+  <arg name="grasp_width_margin_wide" default="0.012" />
+  <arg name="grasp_width_margin_wide_threshold" default="0.070" />
+  <arg name="launch_pointcloud_debug" default="false" />
+  <arg name="pointcloud_show_windows" default="false" />
+  <arg name="pointcloud_show_o3d_windows" default="true" />
+  <arg name="pointcloud_show_raw_o3d" default="false" />
+  <arg name="pointcloud_show_object_overview_o3d" default="true" />
+  <arg name="pointcloud_show_background_o3d" default="false" />
+  <arg name="pointcloud_white_background" default="true" />
+  <arg name="pointcloud_show_bbox" default="false" />
+  <arg name="pointcloud_show_output_grasps" default="true" />
+  <arg name="pointcloud_grasp_top_n" default="6" />
+  <arg name="pointcloud_overview_grasp_top_n" default="4" />
+  <arg name="pointcloud_overview_use_rgb_texture" default="true" />
+  <arg name="pointcloud_focus_object_id" default="-1" />
+  <arg name="pointcloud_focus_selection_mode" default="largest" />
+  <arg name="pointcloud_show_focus_object" default="true" />
+  <arg name="pointcloud_show_focus_pure_object" default="$(arg pointcloud_show_focus_object)" />
+  <arg name="pointcloud_show_focus_overlay_object" default="$(arg pointcloud_show_focus_object)" />
+  <arg name="pointcloud_show_focus_pure_o3d" default="$(arg pointcloud_show_focus_pure_object)" />
+  <arg name="pointcloud_show_focus_overlay_o3d" default="$(arg pointcloud_show_focus_overlay_object)" />
+  <arg name="pointcloud_show_all_object_focus_windows" default="false" />
+  <arg name="pointcloud_show_all_object_focus_pure_o3d" default="$(arg pointcloud_show_all_object_focus_windows)" />
+  <arg name="pointcloud_show_all_object_focus_overlay_o3d" default="$(arg pointcloud_show_all_object_focus_windows)" />
+  <arg name="pointcloud_all_object_detail_max_windows" default="6" />
+  <arg name="pointcloud_focus_use_rgb_texture" default="true" />
+  <arg name="pointcloud_save_snapshots" default="true" />
+  <arg name="pointcloud_grasp_mesh_radius" default="0.0031" />
+  <arg name="pointcloud_grasp_center_radius" default="0.0062" />
+
   <include file="$(find sam_perception)/launch/system_new.launch">
     <arg name="launch_demo" value="true" />
     <arg name="launch_scheduler" value="true" />
     <arg name="launch_wrist_vlm" value="true" />
+    <arg name="launch_wrist_grasp_refiner" value="$(arg launch_wrist_grasp_refiner)" />
     <arg name="launch_global_vlm" value="true" />
     <arg name="launch_semantic_reranker" value="true" />
     <arg name="scheduler_pose_topic" value="/graspnet/grasp_pose_array_semantic" />
     <arg name="scheduler_info_topic" value="/graspnet/grasp_info_semantic" />
-    <arg name="enable_scheduler_fallback" value="false" />
+    <arg name="enable_scheduler_fallback" value="true" />
+    <arg name="fallback_timeout_sec" value="12.0" />
     <arg name="semantic_weight" value="0.35" />
+    <arg name="reachability_weight" value="0.15" />
+    <arg name="per_task_candidate_count" value="6" />
+    <arg name="scheduler_ik_seed_trials" value="4" />
+    <arg name="scheduler_ik_timeout_sec" value="0.35" />
+    <arg name="semantic_vlm_timeout_sec" value="10.0" />
+    <arg name="semantic_vlm_parallel_workers" value="2" />
+    <arg name="max_observation_search_time" value="20.0" />
+    <arg name="observation_ik_avoid_collisions" value="false" />
+    <arg name="observation_ik_seed_trials" value="2" />
+    <arg name="observation_ik_timeout_sec" value="0.20" />
+    <arg name="place_path_orientation_tolerance_deg" value="4.0" />
+    <arg name="place_ik_timeout_sec" value="0.35" />
+    <arg name="place_ik_seed_trials" value="3" />
+    <arg name="center_penalty_weight" value="$(arg center_penalty_weight)" />
+    <arg name="semantic_center_offset_weight" value="$(arg semantic_center_offset_weight)" />
+    <arg name="use_iterative_wrist_alignment" value="$(arg use_iterative_wrist_alignment)" />
+    <arg name="use_final_wrist_alignment" value="$(arg use_final_wrist_alignment)" />
+    <arg name="wrist_alignment_allow_vertical" value="$(arg wrist_alignment_allow_vertical)" />
+    <arg name="use_wrist_grasp_refinement" value="$(arg use_wrist_grasp_refinement)" />
+    <arg name="wrist_visibility_fallback_max_insert" value="$(arg wrist_visibility_fallback_max_insert)" />
+    <arg name="wrist_insert_allow_shorten" value="$(arg wrist_insert_allow_shorten)" />
+    <arg name="simple_front_grasp_mode" value="$(arg simple_front_grasp_mode)" />
+    <arg name="simple_front_insert_extra_depth" value="$(arg simple_front_insert_extra_depth)" />
+    <arg name="simple_front_extra_retreat" value="$(arg simple_front_extra_retreat)" />
+    <arg name="grasp_pose_approach_axis" value="$(arg grasp_pose_approach_axis)" />
+    <arg name="grasp_pose_open_axis" value="$(arg grasp_pose_open_axis)" />
+    <arg name="use_grasp_pose_open_axis_orientation" value="$(arg use_grasp_pose_open_axis_orientation)" />
+    <arg name="allow_raw_grasp_pose_orientation" value="$(arg allow_raw_grasp_pose_orientation)" />
+    <arg name="enforce_horizontal_gripper_open_axis" value="$(arg enforce_horizontal_gripper_open_axis)" />
+    <arg name="max_gripper_open_axis_vertical_component" value="$(arg max_gripper_open_axis_vertical_component)" />
+    <arg name="insert_distance_over_back_cap" value="$(arg insert_distance_over_back_cap)" />
+    <arg name="insert_distance_absolute_max" value="$(arg insert_distance_absolute_max)" />
+    <arg name="wrist_alignment_target_hand_x" value="$(arg wrist_alignment_target_hand_x)" />
+    <arg name="wrist_alignment_target_hand_y" value="$(arg wrist_alignment_target_hand_y)" />
+    <arg name="wrist_alignment_target_hand_z" value="$(arg wrist_alignment_target_hand_z)" />
+    <arg name="grasp_transport_mode" value="$(arg grasp_transport_mode)" />
+    <arg name="enable_gazebo_attach" value="$(arg enable_gazebo_attach)" />
+    <arg name="enable_attached_collision_object" value="$(arg enable_attached_collision_object)" />
+    <arg name="gazebo_attach_distance_threshold" value="$(arg gazebo_attach_distance_threshold)" />
+    <arg name="gazebo_attach_link_name" value="$(arg gazebo_attach_link_name)" />
+    <arg name="use_gazebo_grasp_height_correction" value="false" />
+    <arg name="gazebo_grasp_height_correction_max_delta" value="0.06" />
+    <arg name="gazebo_height_correction_blend_ratio" value="0.5" />
+    <arg name="gazebo_height_correction_max_z" value="0.78" />
+    <arg name="grasp_force" value="$(arg grasp_force)" />
+    <arg name="grasp_width_margin" value="$(arg grasp_width_margin)" />
+    <arg name="grasp_width_margin_ratio" value="$(arg grasp_width_margin_ratio)" />
+    <arg name="grasp_command_width_min" value="$(arg grasp_command_width_min)" />
+    <arg name="grasp_command_width_max" value="$(arg grasp_command_width_max)" />
+    <arg name="grasp_probe_retreat_distance" value="$(arg grasp_probe_retreat_distance)" />
+    <arg name="grasp_probe_wait_sec" value="$(arg grasp_probe_wait_sec)" />
+    <arg name="post_grasp_lift_distance" value="$(arg post_grasp_lift_distance)" />
+    <arg name="enable_grasp_resqueeze_retry" value="$(arg enable_grasp_resqueeze_retry)" />
+    <arg name="grasp_resqueeze_extra_margin" value="$(arg grasp_resqueeze_extra_margin)" />
+    <arg name="grasp_resqueeze_force_boost" value="$(arg grasp_resqueeze_force_boost)" />
+    <arg name="grasp_empty_close_threshold" value="$(arg grasp_empty_close_threshold)" />
+    <arg name="grasp_width_margin_wide" value="$(arg grasp_width_margin_wide)" />
+    <arg name="grasp_width_margin_wide_threshold" value="$(arg grasp_width_margin_wide_threshold)" />
+    <arg name="grasp_epsilon_inner" value="$(arg grasp_epsilon_inner)" />
+    <arg name="grasp_epsilon_outer" value="$(arg grasp_epsilon_outer)" />
+    <arg name="close_extra_shrink" value="$(arg close_extra_shrink)" />
+    <arg name="close_width_floor" value="$(arg close_width_floor)" />
+    <arg name="soft_grasp_width_tolerance" value="$(arg soft_grasp_width_tolerance)" />
+    <arg name="soft_grasp_under_width_tolerance" value="$(arg soft_grasp_under_width_tolerance)" />
+    <arg name="soft_grasp_over_width_tolerance" value="$(arg soft_grasp_over_width_tolerance)" />
+    <arg name="soft_grasp_min_width" value="$(arg soft_grasp_min_width)" />
+    <arg name="soft_grasp_max_width" value="$(arg soft_grasp_max_width)" />
+    <arg name="force_grasp_verify_after_close" value="$(arg force_grasp_verify_after_close)" />
+    <arg name="force_grasp_verify_after_retreat" value="$(arg force_grasp_verify_after_retreat)" />
+    <arg name="force_grasp_verify_wait_sec" value="$(arg force_grasp_verify_wait_sec)" />
+    <arg name="gazebo_functional_grasp_verify" value="$(arg gazebo_functional_grasp_verify)" />
+    <arg name="gazebo_functional_grasp_max_object_to_ee" value="$(arg gazebo_functional_grasp_max_object_to_ee)" />
+    <arg name="gazebo_functional_grasp_min_object_motion" value="$(arg gazebo_functional_grasp_min_object_motion)" />
+    <arg name="gazebo_functional_grasp_min_follow_ratio" value="$(arg gazebo_functional_grasp_min_follow_ratio)" />
+    <arg name="gazebo_functional_grasp_probe_min_object_motion" value="$(arg gazebo_functional_grasp_probe_min_object_motion)" />
+    <arg name="gazebo_functional_grasp_probe_min_follow_ratio" value="$(arg gazebo_functional_grasp_probe_min_follow_ratio)" />
+    <arg name="plan_execution_start_tolerance" value="0.01" />
+    <arg name="place_fallback_velocity_scaling" value="0.18" />
+    <arg name="place_fallback_acceleration_scaling" value="0.12" />
+    <arg name="fast_drop_when_inside_basket" value="true" />
+    <arg name="simple_place_drop" value="true" />
+    <arg name="save_thesis_figures" value="$(arg save_thesis_figures)" />
+    <arg name="figure_output_dir" value="$(arg figure_output_dir)" />
+    <arg name="vlm_api_key" value="$(arg vlm_api_key)" />
+    <arg name="vlm_model" value="$(arg vlm_model)" />
+    <arg name="vlm_base_url" value="$(arg vlm_base_url)" />
+  </include>
+
+  <include file="$(find sam_perception)/launch/pointcloud_debug.launch"
+           if="$(arg launch_pointcloud_debug)">
+    <arg name="launch_rviz" value="false" />
+    <arg name="show_windows" value="$(arg pointcloud_show_windows)" />
+    <arg name="show_o3d_windows" value="$(arg pointcloud_show_o3d_windows)" />
+    <arg name="show_raw_o3d" value="$(arg pointcloud_show_raw_o3d)" />
+    <arg name="show_object_overview_o3d" value="$(arg pointcloud_show_object_overview_o3d)" />
+    <arg name="show_background_o3d" value="$(arg pointcloud_show_background_o3d)" />
+    <arg name="o3d_white_background" value="$(arg pointcloud_white_background)" />
+    <arg name="show_bounding_box" value="$(arg pointcloud_show_bbox)" />
+    <arg name="show_output_grasps" value="$(arg pointcloud_show_output_grasps)" />
+    <arg name="display_grasp_top_n" value="$(arg pointcloud_grasp_top_n)" />
+    <arg name="overview_grasp_top_n" value="$(arg pointcloud_overview_grasp_top_n)" />
+    <arg name="overview_use_rgb_texture" value="$(arg pointcloud_overview_use_rgb_texture)" />
+    <arg name="focus_object_id" value="$(arg pointcloud_focus_object_id)" />
+    <arg name="focus_selection_mode" value="$(arg pointcloud_focus_selection_mode)" />
+    <arg name="show_focus_object" value="$(arg pointcloud_show_focus_object)" />
+    <arg name="show_focus_pure_object" value="$(arg pointcloud_show_focus_pure_object)" />
+    <arg name="show_focus_overlay_object" value="$(arg pointcloud_show_focus_overlay_object)" />
+    <arg name="show_focus_pure_o3d" value="$(arg pointcloud_show_focus_pure_o3d)" />
+    <arg name="show_focus_overlay_o3d" value="$(arg pointcloud_show_focus_overlay_o3d)" />
+    <arg name="show_all_object_focus_windows" value="$(arg pointcloud_show_all_object_focus_windows)" />
+    <arg name="show_all_object_focus_pure_o3d" value="$(arg pointcloud_show_all_object_focus_pure_o3d)" />
+    <arg name="show_all_object_focus_overlay_o3d" value="$(arg pointcloud_show_all_object_focus_overlay_o3d)" />
+    <arg name="all_object_detail_max_windows" value="$(arg pointcloud_all_object_detail_max_windows)" />
+    <arg name="focus_use_rgb_texture" value="$(arg pointcloud_focus_use_rgb_texture)" />
+    <arg name="save_snapshots" value="$(arg pointcloud_save_snapshots)" />
+    <arg name="grasp_mesh_radius" value="$(arg pointcloud_grasp_mesh_radius)" />
+    <arg name="grasp_center_radius" value="$(arg pointcloud_grasp_center_radius)" />
   </include>
 </launch>

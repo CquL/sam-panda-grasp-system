@@ -13,7 +13,7 @@
         <mxCell id="left_header" value="候选姿态裁剪图（语义重排输入）" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontStyle=1;fontSize=18;fontColor=#333333;" vertex="1" parent="1">
           <mxGeometry x="75" y="90" width="300" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="left_image_box" value="将图片拖入此区域：&#xa;/home/lhj/grasp_robot_ws/semantic_rerank_debug/semantic_object_0_20260412_131357.png&#xa;&#xa;图中应保留：&#xa;1. 候选编号 C1 / C2 / C3&#xa;2. 接近方向箭头&#xa;3. 目标局部 RGB 裁剪图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bdbdbd;strokeWidth=2;dashed=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#666666;" vertex="1" parent="1">
+        <mxCell id="left_image_box" value="将图片拖入此区域：&#xa;semantic_rerank_debug/semantic_object_0_example.png&#xa;&#xa;图中应保留：&#xa;1. 候选编号 C1 / C2 / C3&#xa;2. 接近方向箭头&#xa;3. 目标局部 RGB 裁剪图" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bdbdbd;strokeWidth=2;dashed=1;align=center;verticalAlign=middle;fontSize=16;fontColor=#666666;" vertex="1" parent="1">
           <mxGeometry x="75" y="130" width="450" height="300" as="geometry"/>
         </mxCell>
         <mxCell id="left_note" value="候选结构化信息（示例）&#xa;C1: width=0.067m, raw_score=0.856, center_offset=5.7px&#xa;C2: width=0.071m, raw_score=0.839, center_offset=4.1px&#xa;C3: width=0.069m, raw_score=0.797, center_offset=11.7px" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef6ff;strokeColor=#99c2ff;strokeWidth=1;align=left;verticalAlign=middle;fontSize=14;fontColor=#23436b;spacing=8;" vertex="1" parent="1">

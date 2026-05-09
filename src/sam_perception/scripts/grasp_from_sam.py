@@ -17,9 +17,9 @@ from tf.transformations import quaternion_from_matrix
 import tf.transformations as tft
 import tf2_ros
 from gazebo_msgs.srv import GetModelState
-from cv_bridge import CvBridge
 import open3d as o3d
 from visualization_msgs.msg import Marker, MarkerArray
+from ros_image_compat import image_msg_to_numpy
 
 # 环境配置 (保持你原有的路径)
 GRASPNET_ROOT = os.path.join(os.path.expanduser('~'), 'grasp_robot_ws', 'graspnet-baseline')
@@ -45,7 +45,6 @@ class SamGraspNode:
         self.visualize_grasp_on_depth = rospy.get_param("~visualize_grasp_on_depth", True)
         self.visualize_grasp_o3d = rospy.get_param("~visualize_grasp_o3d", False)
         self.top_k_per_object = rospy.get_param("~top_k_per_object", 15)
-        self.bridge = CvBridge()
         self.latest_depth = None
         self.latest_rgb = None
         self.intrinsics = None
@@ -70,6 +69,14 @@ class SamGraspNode:
         if self.visualize_grasp_o3d:
             self.o3d_thread = threading.Thread(target=self.o3d_visualization_loop, daemon=True)
             self.o3d_thread.start()
+        self.object_cloud_topic = rospy.get_param("~object_cloud_topic", "/sam_perception/object_cloud")
+        self.rgb_topic = rospy.get_param("~rgb_topic", "/camera/color/image_raw")
+        self.depth_topic = rospy.get_param("~depth_topic", "/camera/depth/image_raw")
+        self.camera_info_topic = rospy.get_param("~camera_info_topic", "/camera/color/camera_info")
+        self.pose_array_topic = rospy.get_param("~pose_array_topic", "/graspnet/grasp_pose_array_raw")
+        self.info_topic = rospy.get_param("~info_topic", "/graspnet/grasp_info_raw")
+        self.raw_marker_topic = rospy.get_param("~raw_marker_topic", "/graspnet/raw_grasp_markers")
+        self.corrected_marker_topic = rospy.get_param("~corrected_marker_topic", "/graspnet/corrected_grasp_markers")
         
         # 1. 模型加载 (使用你之前的 rs.tar 权重)
         checkpoint_path = os.path.join(GRASPNET_ROOT, 'checkpoint-rs.tar') 
@@ -83,20 +90,29 @@ class SamGraspNode:
         rospy.loginfo("✅ GraspNet 已准备好处理 SAM 点云")
 
         # 2. 核心订阅：听 SAM 抠出来的物体点云
-        self.cloud_sub = rospy.Subscriber("/sam_perception/object_cloud", PointCloud2, self.callback)
-        self.rgb_sub = rospy.Subscriber("/camera/color/image_raw", Image, self.rgb_callback, queue_size=1)
-        self.depth_sub = rospy.Subscriber("/camera/depth/image_raw", Image, self.depth_callback, queue_size=1)
-        self.info_sub = rospy.Subscriber("/camera/color/camera_info", CameraInfo, self.info_callback, queue_size=1)
+        self.cloud_sub = rospy.Subscriber(self.object_cloud_topic, PointCloud2, self.callback)
+        self.rgb_sub = rospy.Subscriber(self.rgb_topic, Image, self.rgb_callback, queue_size=1)
+        self.depth_sub = rospy.Subscriber(self.depth_topic, Image, self.depth_callback, queue_size=1)
+        self.info_sub = rospy.Subscriber(self.camera_info_topic, CameraInfo, self.info_callback, queue_size=1)
         
         # 3. 发布：抓取位姿 和 抓取参数 (为了无缝对接 demo.py)
         # 【修改】使用 PoseArray 发布多个姿态
         # self.pub_pose_array = rospy.Publisher('/graspnet/grasp_pose_array', PoseArray, queue_size=1)
         # self.pub_info = rospy.Publisher('/graspnet/grasp_info', Float32MultiArray, queue_size=1)
 
-        self.pub_pose_array = rospy.Publisher('/graspnet/grasp_pose_array_raw', PoseArray, queue_size=1)
-        self.pub_info = rospy.Publisher('/graspnet/grasp_info_raw', Float32MultiArray, queue_size=1)
-        self.pub_raw_markers = rospy.Publisher('/graspnet/raw_grasp_markers', MarkerArray, queue_size=1)
-        self.pub_corrected_markers = rospy.Publisher('/graspnet/corrected_grasp_markers', MarkerArray, queue_size=1)
+        self.pub_pose_array = rospy.Publisher(self.pose_array_topic, PoseArray, queue_size=1)
+        self.pub_info = rospy.Publisher(self.info_topic, Float32MultiArray, queue_size=1)
+        self.pub_raw_markers = rospy.Publisher(self.raw_marker_topic, MarkerArray, queue_size=1)
+        self.pub_corrected_markers = rospy.Publisher(self.corrected_marker_topic, MarkerArray, queue_size=1)
+        rospy.loginfo(
+            "🔌 GraspNet topics: cloud=%s, rgb=%s, depth=%s, info=%s, poses=%s, grasp_info=%s",
+            self.object_cloud_topic,
+            self.rgb_topic,
+            self.depth_topic,
+            self.camera_info_topic,
+            self.pose_array_topic,
+            self.info_topic,
+        )
         try:
             rospy.wait_for_service('/gazebo/get_model_state', timeout=0.5)
             self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState, persistent=True)
@@ -105,15 +121,27 @@ class SamGraspNode:
 
     def rgb_callback(self, msg):
         try:
-            self.latest_rgb = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception:
-            pass
+            self.latest_rgb = image_msg_to_numpy(msg, "bgr8")
+        except Exception as exc:
+            self.latest_rgb = None
+            rospy.logerr_throttle(
+                5.0,
+                "grasp_from_sam RGB conversion failed (encoding=%s): %s",
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def depth_callback(self, msg):
         try:
-            self.latest_depth = self.bridge.imgmsg_to_cv2(msg, "32FC1")
-        except Exception:
-            pass
+            self.latest_depth = image_msg_to_numpy(msg, "32FC1")
+        except Exception as exc:
+            self.latest_depth = None
+            rospy.logerr_throttle(
+                5.0,
+                "grasp_from_sam depth conversion failed (encoding=%s): %s",
+                getattr(msg, "encoding", ""),
+                exc,
+            )
 
     def info_callback(self, msg):
         self.intrinsics = np.array(msg.K, dtype=np.float64).reshape(3, 3)
@@ -206,13 +234,19 @@ class SamGraspNode:
         approach_world = shelf_tf[:3, :3] @ np.array([1.0, 0.0, 0.0], dtype=np.float64)
         approach_world = approach_world / max(np.linalg.norm(approach_world), 1e-6)
         down_world = np.array([0.0, 0.0, -1.0], dtype=np.float64)
-        lateral_world = np.cross(approach_world, down_world)
-        lateral_norm = np.linalg.norm(lateral_world)
-        if lateral_norm < 1e-6:
+        open_world = np.cross(down_world, approach_world)
+        open_norm = np.linalg.norm(open_world)
+        if open_norm < 1e-6:
             return None
-        lateral_world = lateral_world / lateral_norm
+        open_world = open_world / open_norm
+        palm_down_world = np.cross(approach_world, open_world)
+        palm_down_norm = np.linalg.norm(palm_down_world)
+        if palm_down_norm < 1e-6:
+            return None
+        palm_down_world = palm_down_world / palm_down_norm
 
-        rot_world = np.column_stack([approach_world, down_world, lateral_world])
+        # GraspNet convention used by this stack: local +Z is approach, local +X is gripper opening.
+        rot_world = np.column_stack([open_world, palm_down_world, approach_world])
         rot_sensor = world_to_sensor[:3, :3] @ rot_world
         translation_sensor = (world_to_sensor @ np.array([center_world[0], center_world[1], center_world[2], 1.0], dtype=np.float64))[:3]
         translation_sensor = translation_sensor - rot_sensor[:, 2] * approach_offset
@@ -224,6 +258,34 @@ class SamGraspNode:
             "rotation": rot_sensor.astype(np.float32),
             "translation": translation_sensor.astype(np.float32),
         }
+
+    def estimate_robust_object_center(self, object_cloud):
+        if len(object_cloud) == 0:
+            return np.zeros((3,), dtype=np.float32)
+        if len(object_cloud) < 40:
+            return np.median(object_cloud, axis=0).astype(np.float32)
+
+        q_lo = np.percentile(object_cloud, 20.0, axis=0)
+        q_hi = np.percentile(object_cloud, 80.0, axis=0)
+        core_mask = np.all((object_cloud >= q_lo) & (object_cloud <= q_hi), axis=1)
+        if int(np.count_nonzero(core_mask)) >= max(30, int(0.25 * len(object_cloud))):
+            return np.mean(object_cloud[core_mask], axis=0).astype(np.float32)
+        return np.median(object_cloud, axis=0).astype(np.float32)
+
+    def compute_lateral_center_penalty(self, translations, forward_vectors, object_center):
+        if len(translations) == 0:
+            return np.empty((0,), dtype=np.float32)
+
+        forward = np.asarray(forward_vectors, dtype=np.float64)
+        forward_norm = np.linalg.norm(forward, axis=1, keepdims=True)
+        forward = forward / np.clip(forward_norm, 1e-6, None)
+
+        delta = np.asarray(translations, dtype=np.float64) - np.asarray(object_center, dtype=np.float64)[None, :]
+        forward_component = np.sum(delta * forward, axis=1, keepdims=True) * forward
+        lateral_delta = delta - forward_component
+        lateral_dist = np.linalg.norm(lateral_delta, axis=1).astype(np.float32)
+        max_lateral_dist = float(np.max(lateral_dist)) + 1e-5
+        return (lateral_dist / max_lateral_dist).astype(np.float32)
 
     def compute_candidate_context_features(self, translations, rotations, source_frame, xyz, object_ids, current_object_id):
         num_candidates = len(translations)
@@ -249,7 +311,7 @@ class SamGraspNode:
         translations_world_h = np.hstack([translations_world, np.ones((num_candidates, 1), dtype=np.float64)])
         translations_local = (world_to_shelf @ translations_world_h.T).T[:, :3]
 
-        approach_world = np.einsum("ij,njk->nik", rot_sensor_to_world, rotations)[:, :, 0]
+        approach_world = np.einsum("ij,njk->nik", rot_sensor_to_world, rotations)[:, :, 2]
         approach_local = (rot_world_to_shelf @ approach_world.T).T
         # 这里只关心“是否沿货架法向”，不关心符号。
         # 实际执行端已经会强制沿货架法向插入，所以此处不应因正负号把候选全过滤掉。
@@ -441,10 +503,12 @@ class SamGraspNode:
                 forward_vector = rotations[:, :, 2]
                 translations = translations + forward_vector * approach_offset
 
-                object_center = np.mean(object_cloud, axis=0)
-                distances = np.linalg.norm(translations - object_center, axis=1)
-                max_dist = np.max(distances) + 1e-5
-                normalized_distances = distances / max_dist
+                object_center = self.estimate_robust_object_center(object_cloud)
+                normalized_distances = self.compute_lateral_center_penalty(
+                    translations=translations,
+                    forward_vectors=forward_vector,
+                    object_center=object_center,
+                )
                 context = self.compute_candidate_context_features(
                     translations=translations,
                     rotations=rotations,

@@ -1,4 +1,6 @@
 <launch>
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
+  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
   <arg name="basket_x" default="0.393296" />
   <arg name="basket_y" default="-0.315779" />
@@ -6,6 +8,16 @@
   <arg name="use_basket_slot_grid" default="false" />
   <arg name="use_fixed_shelf_collision" default="true" />
   <arg name="force_shelf_normal_approach" default="true" />
+  <arg name="simple_front_grasp_mode" default="true" />
+  <arg name="simple_front_insert_extra_depth" default="0.010" />
+  <arg name="simple_front_extra_retreat" default="0.080" />
+  <arg name="grasp_pose_approach_axis" default="+z" />
+  <arg name="grasp_pose_open_axis" default="+x" />
+  <arg name="use_grasp_pose_open_axis_orientation" default="false" />
+  <arg name="allow_raw_grasp_pose_orientation" default="false" />
+  <arg name="enforce_horizontal_gripper_open_axis" default="true" />
+  <arg name="max_gripper_open_axis_vertical_component" default="0.25" />
+  <arg name="grasp_transport_mode" default="force_only" />
   <arg name="shelf_model_name" default="narrow_supermarket_shelf_enclosed_0" />
   <arg name="shelf_pose_fallback_x" default="0.737098" />
   <arg name="shelf_pose_fallback_y" default="-0.148598" />
@@ -40,27 +52,52 @@
   <arg name="gripper_width_margin" default="0.006" />
   <arg name="pre_grasp_back_distance" default="0.12" />
   <arg name="pre_grasp_back_distance_candidates" default="[0.12, 0.15, 0.18]" />
+  <arg name="observation_ik_avoid_collisions" default="true" />
+  <arg name="enable_goal_state_validity_check" default="true" />
   <arg name="wrist_observation_backoff" default="0.04" />
   <arg name="wrist_depth_band" default="0.05" />
   <arg name="wrist_front_depth_percentile" default="20.0" />
   <arg name="insert_extra_depth_min" default="0.01" />
   <arg name="insert_depth_margin" default="0.01" />
   <arg name="insert_extra_depth_max" default="0.09" />
+  <arg name="insert_distance_over_back_cap" default="0.08" />
+  <arg name="insert_distance_absolute_max" default="0.20" />
   <arg name="wrist_visibility_margin_px" default="8" />
   <arg name="wrist_require_full_visibility" default="false" />
-  <arg name="wrist_min_insert_fraction" default="0.45" />
+  <arg name="wrist_visibility_fallback_max_insert" default="0.08" />
+  <arg name="wrist_min_insert_fraction" default="0.60" />
   <arg name="use_iterative_wrist_alignment" default="false" />
   <arg name="wrist_alignment_max_iters" default="1" />
   <arg name="use_final_wrist_alignment" default="false" />
   <arg name="wrist_alignment_allow_vertical" default="false" />
-  <arg name="use_wrist_guided_insert_distance" default="false" />
+  <arg name="use_wrist_guided_insert_distance" default="true" />
   <arg name="wrist_extra_insert_max" default="0.03" />
+  <arg name="wrist_insert_allow_shorten" default="false" />
+  <arg name="wrist_insert_shorten_max" default="0.08" />
+  <arg name="wrist_insert_depth_scale" default="0.35" />
+  <arg name="wrist_insert_depth_cap" default="0.015" />
   <arg name="wrist_alignment_tol" default="0.008" />
   <arg name="wrist_grasp_depth_margin" default="0.005" />
-  <arg name="wrist_grasp_forward_min" default="0.03" />
-  <arg name="wrist_grasp_forward_max" default="0.09" />
+  <arg name="wrist_grasp_forward_min" default="0.075" />
+  <arg name="wrist_grasp_forward_max" default="0.110" />
+  <arg name="use_wrist_grasp_refinement" default="false" />
+  <arg name="wrist_object_cloud_topic" default="/sam_perception/wrist_object_cloud" />
+  <arg name="wrist_grasp_pose_topic" default="/graspnet/wrist_grasp_pose_array" />
+  <arg name="wrist_grasp_info_topic" default="/graspnet/wrist_grasp_info" />
+  <arg name="wrist_grasp_timeout_sec" default="6.0" />
+  <arg name="wrist_grasp_bbox_margin_px" default="8" />
+  <arg name="wrist_grasp_depth_band" default="0.06" />
+  <arg name="wrist_grasp_min_points" default="80" />
+  <arg name="wrist_grasp_cloud_max_points" default="12000" />
+  <arg name="wrist_grasp_min_approach_alignment" default="0.25" />
   <arg name="refresh_collision_before_pick" default="true" />
   <arg name="grasp_corridor_padding" default="0.03" />
+  <arg name="enable_direct_grasp_fallback" default="true" />
+  <arg name="direct_grasp_back_distance_candidates" default="[0.04, 0.06, 0.08]" />
+  <arg name="direct_grasp_planning_time" default="3.0" />
+  <arg name="direct_grasp_planning_attempts" default="5" />
+  <arg name="direct_grasp_retreat_distance" default="0.08" />
+  <arg name="direct_grasp_require_width_hold" default="true" />
   <arg name="enable_gazebo_attach" default="false" />
   <arg name="gazebo_attach_distance_threshold" default="0.18" />
   <arg name="gazebo_attach_link_name" default="panda_link8" />
@@ -68,23 +105,48 @@
   <arg name="insert_step_size" default="0.025" />
   <arg name="retreat_step_size" default="0.025" />
   <arg name="lift_step_size" default="0.012" />
+  <arg name="post_grasp_lift_distance" default="0.015" />
+  <arg name="cartesian_eef_step" default="0.005" />
   <arg name="use_pose_preserving_transport" default="false" />
   <arg name="place_hover_height" default="0.05" />
   <arg name="place_release_height_offset" default="0.02" />
+  <arg name="place_release_height_above_basket" default="0.20" />
   <arg name="place_orientation_mode" default="preserve" />
   <arg name="place_allow_position_only_fallback" default="false" />
   <arg name="simple_place_drop" default="true" />
-  <arg name="grasp_roll_variants" default="['x_down']" />
+  <arg name="grasp_roll_variants" default="['x_up', 'x_down']" />
   <arg name="grasp_force" default="50.0" />
-  <arg name="grasp_width_margin" default="0.004" />
-  <arg name="grasp_command_width_min" default="0.010" />
+  <arg name="grasp_width_margin" default="0.008" />
+  <arg name="grasp_width_margin_ratio" default="0.060" />
+  <arg name="grasp_width_margin_wide" default="0.012" />
+  <arg name="grasp_width_margin_wide_threshold" default="0.070" />
+  <arg name="grasp_command_width_min" default="0.008" />
   <arg name="grasp_command_width_max" default="0.078" />
-  <arg name="grasp_epsilon_inner" default="0.020" />
-  <arg name="grasp_epsilon_outer" default="0.020" />
+  <arg name="grasp_probe_retreat_distance" default="0.0" />
+  <arg name="grasp_probe_wait_sec" default="0.10" />
+  <arg name="enable_grasp_resqueeze_retry" default="true" />
+  <arg name="grasp_resqueeze_extra_margin" default="0.006" />
+  <arg name="grasp_resqueeze_force_boost" default="10.0" />
+  <arg name="grasp_empty_close_threshold" default="0.010" />
+  <arg name="grasp_epsilon_inner" default="0.030" />
+  <arg name="grasp_epsilon_outer" default="0.030" />
+  <arg name="close_extra_shrink" default="0.004" />
+  <arg name="close_width_floor" default="0.006" />
   <arg name="grasp_timeout_sec" default="4.0" />
   <arg name="soft_grasp_width_tolerance" default="0.030" />
+  <arg name="soft_grasp_under_width_tolerance" default="0.018" />
+  <arg name="soft_grasp_over_width_tolerance" default="0.008" />
   <arg name="soft_grasp_min_width" default="0.035" />
   <arg name="soft_grasp_max_width" default="0.078" />
+  <arg name="force_grasp_verify_after_close" default="true" />
+  <arg name="force_grasp_verify_after_retreat" default="true" />
+  <arg name="force_grasp_verify_wait_sec" default="0.25" />
+  <arg name="gazebo_functional_grasp_verify" default="true" />
+  <arg name="gazebo_functional_grasp_max_object_to_ee" default="0.14" />
+  <arg name="gazebo_functional_grasp_min_object_motion" default="0.015" />
+  <arg name="gazebo_functional_grasp_min_follow_ratio" default="0.35" />
+  <arg name="gazebo_functional_grasp_probe_min_object_motion" default="0.006" />
+  <arg name="gazebo_functional_grasp_probe_min_follow_ratio" default="0.30" />
   <arg name="refresh_collision_after_each_place" default="false" />
   <arg name="launch_global_vlm" default="false" />
   <arg name="launch_semantic_reranker" default="false" />
@@ -95,6 +157,10 @@
   <arg name="fallback_info_topic" default="/graspnet/grasp_info_raw" />
   <arg name="fallback_timeout_sec" default="1.5" />
   <arg name="semantic_weight" default="0.0" />
+  <arg name="per_task_candidate_count" default="4" />
+  <arg name="allow_unreachable_candidate_dispatch" default="true" />
+  <arg name="scheduler_ik_seed_trials" default="3" />
+  <arg name="scheduler_ik_timeout_sec" default="0.12" />
     <!-- 常用候选:
        panda_manipulator[RRTConnect]
        panda_manipulator[RRT]
@@ -112,6 +178,16 @@
     <param name="use_basket_slot_grid" value="$(arg use_basket_slot_grid)" />
     <param name="use_fixed_shelf_collision" value="$(arg use_fixed_shelf_collision)" />
     <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
+    <param name="simple_front_grasp_mode" value="$(arg simple_front_grasp_mode)" />
+    <param name="simple_front_insert_extra_depth" value="$(arg simple_front_insert_extra_depth)" />
+    <param name="simple_front_extra_retreat" value="$(arg simple_front_extra_retreat)" />
+    <param name="grasp_pose_approach_axis" value="$(arg grasp_pose_approach_axis)" />
+    <param name="grasp_pose_open_axis" value="$(arg grasp_pose_open_axis)" />
+    <param name="use_grasp_pose_open_axis_orientation" value="$(arg use_grasp_pose_open_axis_orientation)" />
+    <param name="allow_raw_grasp_pose_orientation" value="$(arg allow_raw_grasp_pose_orientation)" />
+    <param name="enforce_horizontal_gripper_open_axis" value="$(arg enforce_horizontal_gripper_open_axis)" />
+    <param name="max_gripper_open_axis_vertical_component" value="$(arg max_gripper_open_axis_vertical_component)" />
+    <param name="grasp_transport_mode" value="$(arg grasp_transport_mode)" />
     <param name="shelf_model_name" value="$(arg shelf_model_name)" />
     <param name="shelf_pose_fallback_x" value="$(arg shelf_pose_fallback_x)" />
     <param name="shelf_pose_fallback_y" value="$(arg shelf_pose_fallback_y)" />
@@ -119,6 +195,8 @@
     <param name="shelf_pose_fallback_yaw" value="$(arg shelf_pose_fallback_yaw)" />
     <param name="figure_output_dir" value="$(arg figure_output_dir)" />
     <param name="save_task_keyframes" value="$(arg save_task_keyframes)" />
+    <param name="observation_ik_avoid_collisions" value="$(arg observation_ik_avoid_collisions)" />
+    <param name="enable_goal_state_validity_check" value="$(arg enable_goal_state_validity_check)" />
     <param name="object_front_depth_percentile" value="$(arg object_front_depth_percentile)" />
     <param name="object_depth_gate_band" value="$(arg object_depth_gate_band)" />
     <param name="background_min_depth" value="$(arg background_min_depth)" />
@@ -138,8 +216,11 @@
     <param name="insert_extra_depth_min" value="$(arg insert_extra_depth_min)" />
     <param name="insert_depth_margin" value="$(arg insert_depth_margin)" />
     <param name="insert_extra_depth_max" value="$(arg insert_extra_depth_max)" />
+    <param name="insert_distance_over_back_cap" value="$(arg insert_distance_over_back_cap)" />
+    <param name="insert_distance_absolute_max" value="$(arg insert_distance_absolute_max)" />
     <param name="wrist_visibility_margin_px" value="$(arg wrist_visibility_margin_px)" />
     <param name="wrist_require_full_visibility" value="$(arg wrist_require_full_visibility)" />
+    <param name="wrist_visibility_fallback_max_insert" value="$(arg wrist_visibility_fallback_max_insert)" />
     <param name="wrist_min_insert_fraction" value="$(arg wrist_min_insert_fraction)" />
     <param name="use_iterative_wrist_alignment" value="$(arg use_iterative_wrist_alignment)" />
     <param name="wrist_alignment_max_iters" value="$(arg wrist_alignment_max_iters)" />
@@ -147,12 +228,32 @@
     <param name="wrist_alignment_allow_vertical" value="$(arg wrist_alignment_allow_vertical)" />
     <param name="use_wrist_guided_insert_distance" value="$(arg use_wrist_guided_insert_distance)" />
     <param name="wrist_extra_insert_max" value="$(arg wrist_extra_insert_max)" />
+    <param name="wrist_insert_allow_shorten" value="$(arg wrist_insert_allow_shorten)" />
+    <param name="wrist_insert_shorten_max" value="$(arg wrist_insert_shorten_max)" />
+    <param name="wrist_insert_depth_scale" value="$(arg wrist_insert_depth_scale)" />
+    <param name="wrist_insert_depth_cap" value="$(arg wrist_insert_depth_cap)" />
     <param name="wrist_alignment_tol" value="$(arg wrist_alignment_tol)" />
     <param name="wrist_grasp_depth_margin" value="$(arg wrist_grasp_depth_margin)" />
     <param name="wrist_grasp_forward_min" value="$(arg wrist_grasp_forward_min)" />
     <param name="wrist_grasp_forward_max" value="$(arg wrist_grasp_forward_max)" />
+    <param name="use_wrist_grasp_refinement" value="$(arg use_wrist_grasp_refinement)" />
+    <param name="wrist_object_cloud_topic" value="$(arg wrist_object_cloud_topic)" />
+    <param name="wrist_grasp_pose_topic" value="$(arg wrist_grasp_pose_topic)" />
+    <param name="wrist_grasp_info_topic" value="$(arg wrist_grasp_info_topic)" />
+    <param name="wrist_grasp_timeout_sec" value="$(arg wrist_grasp_timeout_sec)" />
+    <param name="wrist_grasp_bbox_margin_px" value="$(arg wrist_grasp_bbox_margin_px)" />
+    <param name="wrist_grasp_depth_band" value="$(arg wrist_grasp_depth_band)" />
+    <param name="wrist_grasp_min_points" value="$(arg wrist_grasp_min_points)" />
+    <param name="wrist_grasp_cloud_max_points" value="$(arg wrist_grasp_cloud_max_points)" />
+    <param name="wrist_grasp_min_approach_alignment" value="$(arg wrist_grasp_min_approach_alignment)" />
     <param name="refresh_collision_before_pick" value="$(arg refresh_collision_before_pick)" />
     <param name="grasp_corridor_padding" value="$(arg grasp_corridor_padding)" />
+    <param name="enable_direct_grasp_fallback" value="$(arg enable_direct_grasp_fallback)" />
+    <rosparam param="direct_grasp_back_distance_candidates" subst_value="True">$(arg direct_grasp_back_distance_candidates)</rosparam>
+    <param name="direct_grasp_planning_time" value="$(arg direct_grasp_planning_time)" />
+    <param name="direct_grasp_planning_attempts" value="$(arg direct_grasp_planning_attempts)" />
+    <param name="direct_grasp_retreat_distance" value="$(arg direct_grasp_retreat_distance)" />
+    <param name="direct_grasp_require_width_hold" value="$(arg direct_grasp_require_width_hold)" />
     <param name="enable_gazebo_attach" value="$(arg enable_gazebo_attach)" />
     <param name="gazebo_attach_distance_threshold" value="$(arg gazebo_attach_distance_threshold)" />
     <param name="gazebo_attach_link_name" value="$(arg gazebo_attach_link_name)" />
@@ -160,23 +261,48 @@
     <param name="insert_step_size" value="$(arg insert_step_size)" />
     <param name="retreat_step_size" value="$(arg retreat_step_size)" />
     <param name="lift_step_size" value="$(arg lift_step_size)" />
+    <param name="post_grasp_lift_distance" value="$(arg post_grasp_lift_distance)" />
+    <param name="cartesian_eef_step" value="$(arg cartesian_eef_step)" />
     <param name="use_pose_preserving_transport" value="$(arg use_pose_preserving_transport)" />
     <param name="place_hover_height" value="$(arg place_hover_height)" />
     <param name="place_release_height_offset" value="$(arg place_release_height_offset)" />
+    <param name="place_release_height_above_basket" value="$(arg place_release_height_above_basket)" />
     <param name="place_orientation_mode" value="$(arg place_orientation_mode)" />
     <param name="place_allow_position_only_fallback" value="$(arg place_allow_position_only_fallback)" />
     <param name="simple_place_drop" value="$(arg simple_place_drop)" />
     <rosparam param="grasp_roll_variants" subst_value="True">$(arg grasp_roll_variants)</rosparam>
     <param name="grasp_force" value="$(arg grasp_force)" />
     <param name="grasp_width_margin" value="$(arg grasp_width_margin)" />
+    <param name="grasp_width_margin_ratio" value="$(arg grasp_width_margin_ratio)" />
+    <param name="grasp_width_margin_wide" value="$(arg grasp_width_margin_wide)" />
+    <param name="grasp_width_margin_wide_threshold" value="$(arg grasp_width_margin_wide_threshold)" />
     <param name="grasp_command_width_min" value="$(arg grasp_command_width_min)" />
     <param name="grasp_command_width_max" value="$(arg grasp_command_width_max)" />
+    <param name="grasp_probe_retreat_distance" value="$(arg grasp_probe_retreat_distance)" />
+    <param name="grasp_probe_wait_sec" value="$(arg grasp_probe_wait_sec)" />
+    <param name="enable_grasp_resqueeze_retry" value="$(arg enable_grasp_resqueeze_retry)" />
+    <param name="grasp_resqueeze_extra_margin" value="$(arg grasp_resqueeze_extra_margin)" />
+    <param name="grasp_resqueeze_force_boost" value="$(arg grasp_resqueeze_force_boost)" />
+    <param name="grasp_empty_close_threshold" value="$(arg grasp_empty_close_threshold)" />
     <param name="grasp_epsilon_inner" value="$(arg grasp_epsilon_inner)" />
     <param name="grasp_epsilon_outer" value="$(arg grasp_epsilon_outer)" />
+    <param name="close_extra_shrink" value="$(arg close_extra_shrink)" />
+    <param name="close_width_floor" value="$(arg close_width_floor)" />
     <param name="grasp_timeout_sec" value="$(arg grasp_timeout_sec)" />
     <param name="soft_grasp_width_tolerance" value="$(arg soft_grasp_width_tolerance)" />
+    <param name="soft_grasp_under_width_tolerance" value="$(arg soft_grasp_under_width_tolerance)" />
+    <param name="soft_grasp_over_width_tolerance" value="$(arg soft_grasp_over_width_tolerance)" />
     <param name="soft_grasp_min_width" value="$(arg soft_grasp_min_width)" />
     <param name="soft_grasp_max_width" value="$(arg soft_grasp_max_width)" />
+    <param name="force_grasp_verify_after_close" value="$(arg force_grasp_verify_after_close)" />
+    <param name="force_grasp_verify_after_retreat" value="$(arg force_grasp_verify_after_retreat)" />
+    <param name="force_grasp_verify_wait_sec" value="$(arg force_grasp_verify_wait_sec)" />
+    <param name="gazebo_functional_grasp_verify" value="$(arg gazebo_functional_grasp_verify)" />
+    <param name="gazebo_functional_grasp_max_object_to_ee" value="$(arg gazebo_functional_grasp_max_object_to_ee)" />
+    <param name="gazebo_functional_grasp_min_object_motion" value="$(arg gazebo_functional_grasp_min_object_motion)" />
+    <param name="gazebo_functional_grasp_min_follow_ratio" value="$(arg gazebo_functional_grasp_min_follow_ratio)" />
+    <param name="gazebo_functional_grasp_probe_min_object_motion" value="$(arg gazebo_functional_grasp_probe_min_object_motion)" />
+    <param name="gazebo_functional_grasp_probe_min_follow_ratio" value="$(arg gazebo_functional_grasp_probe_min_follow_ratio)" />
     <param name="refresh_collision_after_each_place" value="$(arg refresh_collision_after_each_place)" />
   </node>
 
@@ -188,20 +314,24 @@
     <param name="fallback_info_topic" value="$(arg fallback_info_topic)" />
     <param name="fallback_timeout_sec" value="$(arg fallback_timeout_sec)" />
     <param name="semantic_weight" value="$(arg semantic_weight)" />
+    <param name="per_task_candidate_count" value="$(arg per_task_candidate_count)" />
+    <param name="allow_unreachable_candidate_dispatch" value="$(arg allow_unreachable_candidate_dispatch)" />
+    <param name="ik_seed_trials" value="$(arg scheduler_ik_seed_trials)" />
+    <param name="ik_timeout_sec" value="$(arg scheduler_ik_timeout_sec)" />
   </node>
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
-        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
+        launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
   </node>
 
   <node pkg="sam_perception" type="global_vlm_target_node.py" name="global_vlm_target_node" output="screen"
         if="$(arg launch_global_vlm)"
-        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
+        launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
   </node>
 
   <node pkg="sam_perception" type="semantic_reranker.py" name="semantic_reranker" output="screen"
         if="$(arg launch_semantic_reranker)"
-        launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(optenv ANYGRASP_PYTHON python3)">
+        launch-prefix="env LD_PRELOAD=$(arg anygrasp_ld_preload) $(arg anygrasp_python)">
     <param name="strict_width_filter" value="$(arg strict_width_filter)" />
     <param name="gripper_width_max" value="$(arg gripper_width_max)" />
     <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
