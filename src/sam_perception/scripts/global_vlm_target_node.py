@@ -21,7 +21,7 @@ from std_msgs.msg import Float32MultiArray, String
 from sam_perception.ros_image_compat import image_msg_to_numpy, numpy_to_image_msg
 
 
-DEFAULT_API_KEY = "sk-a85a76a8ada94ef2886ecd43bf0f9e80"
+DEFAULT_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
 
 
 class GlobalVLMTargetNode:
