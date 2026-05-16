@@ -22,7 +22,10 @@ from geometry_msgs.msg import PoseArray
 from openai import OpenAI
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Float32MultiArray, String
-from ros_image_compat import image_msg_to_numpy
+from sam_perception.ros_image_compat import image_msg_to_numpy
+
+
+DEFAULT_API_KEY = "sk-a85a76a8ada94ef2886ecd43bf0f9e80"
 
 
 class SemanticRerankerNode:
@@ -36,8 +39,8 @@ class SemanticRerankerNode:
         self.pending_pose_msg = None
         self.pending_info_msg = None
 
-        self.pose_topic = rospy.get_param("~pose_topic", "/graspnet/grasp_pose_array_raw")
-        self.info_topic = rospy.get_param("~info_topic", "/graspnet/grasp_info_raw")
+        self.pose_topic = rospy.get_param("~pose_topic", "/graspnet/grasp_pose_array_ik")
+        self.info_topic = rospy.get_param("~info_topic", "/graspnet/grasp_info_ik")
         self.out_pose_topic = rospy.get_param("~out_pose_topic", "/graspnet/grasp_pose_array_semantic")
         self.out_info_topic = rospy.get_param("~out_info_topic", "/graspnet/grasp_info_semantic")
         self.image_topic = rospy.get_param("~image_topic", "/camera/color/image_raw")
@@ -46,19 +49,21 @@ class SemanticRerankerNode:
         self.target_image_topic = rospy.get_param("~target_image_topic", "/vlm/global_target_image")
         self.object_metadata_topic = rospy.get_param("~object_metadata_topic", "/sam_perception/object_metadata")
         self.result_topic = rospy.get_param("~result_topic", "/vlm/semantic_rerank")
-        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
+        self.model_name = rospy.get_param("~model", "qwen-vl-max")
         self.base_url = rospy.get_param(
             "~base_url",
-            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
-        self.api_key = api_key_param or env_api_key
+        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
         self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 10.0))
         self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 1)))
         self.vlm_parallel_workers = max(1, int(rospy.get_param("~vlm_parallel_workers", 2)))
+        self.skip_vlm_for_single_object = bool(rospy.get_param("~skip_vlm_for_single_object", True))
         self.max_candidates_per_object = max(1, int(rospy.get_param("~max_candidates_per_object", 3)))
         self.overview_candidates_per_object = max(1, int(rospy.get_param("~overview_candidates_per_object", 15)))
+        self.max_output_candidates_per_object = int(
+            rospy.get_param("~max_output_candidates_per_object", 0)
+        )
         self.crop_margin_px = max(20, int(rospy.get_param("~crop_margin_px", 40)))
         self.axis_length = float(rospy.get_param("~axis_length", 0.04))
         self.center_offset_weight = float(rospy.get_param("~center_offset_weight", 0.18))
@@ -69,18 +74,12 @@ class SemanticRerankerNode:
         self.save_candidate_crop = bool(rospy.get_param("~save_candidate_crop", True))
         self.save_candidate_json = bool(rospy.get_param("~save_candidate_json", True))
         self.candidate_debug_dir = os.path.expanduser(
-            rospy.get_param(
-                "~candidate_debug_dir",
-                os.environ.get("SEMANTIC_RERANK_DEBUG_DIR", "~/grasp_robot_ws/semantic_rerank_debug"),
-            )
+            rospy.get_param("~candidate_debug_dir", "~/grasp_robot_ws/semantic_rerank_debug")
         )
         self.visualize_global_overview = bool(rospy.get_param("~visualize_global_overview", True))
         self.save_global_overview = bool(rospy.get_param("~save_global_overview", True))
         self.global_overview_dir = os.path.expanduser(
-            rospy.get_param(
-                "~global_overview_dir",
-                os.environ.get("SEMANTIC_RERANK_OVERVIEW_DIR", "~/grasp_robot_ws/semantic_rerank_overview"),
-            )
+            rospy.get_param("~global_overview_dir", "~/grasp_robot_ws/semantic_rerank_overview")
         )
         if self.vlm_parallel_workers > 1 and self.visualize_candidate_crop:
             rospy.logwarn(
@@ -93,18 +92,12 @@ class SemanticRerankerNode:
         for var in proxy_vars:
             os.environ.pop(var, None)
 
-        self.client = None
-        if self.api_key:
-            self.client = OpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-                timeout=self.vlm_timeout_sec,
-                max_retries=self.vlm_max_retries,
-            )
-        else:
-            rospy.logwarn(
-                "semantic_reranker: no DASHSCOPE_API_KEY; semantic rerank will pass through raw grasps."
-            )
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.vlm_timeout_sec,
+            max_retries=self.vlm_max_retries,
+        )
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         rospy.Subscriber(self.camera_info_topic, CameraInfo, self.camera_info_cb, queue_size=1)
@@ -119,13 +112,15 @@ class SemanticRerankerNode:
         self.pub_result = rospy.Publisher(self.result_topic, String, queue_size=1)
 
         rospy.loginfo(
-            "Semantic reranker ready. input=(%s,%s) output=(%s,%s), timeout=%.1fs retries=%d",
+            "Semantic reranker ready. input=(%s,%s) output=(%s,%s), timeout=%.1fs retries=%d, output_limit/object=%d, skip_single=%s",
             self.pose_topic,
             self.info_topic,
             self.out_pose_topic,
             self.out_info_topic,
             self.vlm_timeout_sec,
             self.vlm_max_retries,
+            self.max_output_candidates_per_object,
+            str(self.skip_vlm_for_single_object).lower(),
         )
 
     def image_cb(self, msg):
@@ -269,6 +264,10 @@ class SemanticRerankerNode:
 
         rank_targets = [(object_id, indices, bbox) for object_id, indices, bbox in object_plan if bbox is not None]
         rank_results = {}
+        skip_single_vlm = self.skip_vlm_for_single_object and len(object_groups) == 1
+        if skip_single_vlm:
+            rospy.loginfo("semantic_reranker: 单目标任务跳过语义 VLM 重排，仅按 IK 可达和 GraspNet 分数排序。")
+
         if self.vlm_parallel_workers > 1 and len(rank_targets) > 1:
             worker_count = min(self.vlm_parallel_workers, len(rank_targets))
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -281,6 +280,7 @@ class SemanticRerankerNode:
                         pose_msg,
                         data,
                         info_stride,
+                        skip_single_vlm,
                     ): (object_id, indices)
                     for object_id, indices, bbox in rank_targets
                 }
@@ -299,7 +299,7 @@ class SemanticRerankerNode:
             for object_id, indices, bbox in rank_targets:
                 try:
                     rank_results[object_id] = self.rank_object_candidates(
-                        object_id, bbox, indices, pose_msg, data, info_stride
+                        object_id, bbox, indices, pose_msg, data, info_stride, skip_single_vlm
                     )
                 except Exception as exc:
                     rospy.logwarn(
@@ -312,17 +312,17 @@ class SemanticRerankerNode:
         new_order = []
         for object_id, indices, bbox in object_plan:
             if bbox is None:
-                new_order.extend(indices)
+                new_order.extend(self.limit_output_candidates(indices))
                 continue
             rank_result = rank_results.get(object_id)
             if rank_result is None:
-                new_order.extend(indices)
+                new_order.extend(self.limit_output_candidates(indices))
                 continue
 
             chosen_order, chosen_scores, result_payload = rank_result
             for idx, score in chosen_scores.items():
                 semantic_scores[idx] = score
-            new_order.extend(chosen_order)
+            new_order.extend(self.limit_output_candidates(chosen_order))
             debug_payload["objects"].append(result_payload)
             if "overview_item" in result_payload:
                 debug_payload["overview_items"].append(result_payload["overview_item"])
@@ -332,6 +332,11 @@ class SemanticRerankerNode:
         self.visualize_global_overview_canvas(debug_payload)
         reordered_pose, reordered_info = self.build_outputs(pose_msg, data, info_stride, order, semantic_scores)
         return reordered_pose, reordered_info, debug_payload
+
+    def limit_output_candidates(self, indices):
+        if self.max_output_candidates_per_object <= 0:
+            return list(indices)
+        return list(indices[: self.max_output_candidates_per_object])
 
     def build_outputs(self, pose_msg, data, info_stride, order, semantic_scores):
         reordered_pose = PoseArray()
@@ -367,6 +372,15 @@ class SemanticRerankerNode:
                 return 0.0
         return 0.0
 
+    def extract_ik_flag(self, data, info_stride, idx):
+        """读取 IK filter 写入的可达性标记 (info index 4): 1.0=可达, 0.0=不可达"""
+        if info_stride >= 5:
+            try:
+                return float(data[idx * info_stride + 4])
+            except Exception:
+                return 0.0
+        return 1.0  # 没有 IK 信息时默认认为可达
+
     def lookup_bbox_for_object(self, object_id):
         metadata = self.latest_object_metadata.get(int(object_id))
         if isinstance(metadata, dict):
@@ -387,7 +401,7 @@ class SemanticRerankerNode:
     def is_valid_bbox(self, bbox):
         return isinstance(bbox, (list, tuple)) and len(bbox) == 4
 
-    def rank_object_candidates(self, object_id, bbox, indices, pose_msg, data, info_stride):
+    def rank_object_candidates(self, object_id, bbox, indices, pose_msg, data, info_stride, skip_vlm=False):
         raw_scores = {idx: float(data[idx * info_stride + 2]) for idx in indices}
         width_map = {idx: float(data[idx * info_stride + 1]) for idx in indices}
         depth_map = {idx: float(data[idx * info_stride + 3]) for idx in indices}
@@ -422,9 +436,81 @@ class SemanticRerankerNode:
         else:
             candidate_pool = ranked_by_score
 
-        top_indices = candidate_pool[: self.max_candidates_per_object]
+        # ── IK 可达性过滤：优先只让 VLM 评 IK 可达的候选 ──
+        ik_feasible = [
+            idx for idx in candidate_pool if self.extract_ik_flag(data, info_stride, idx) > 0.5
+        ]
+        ik_infeasible = [idx for idx in candidate_pool if idx not in ik_feasible]
+
+        if ik_feasible:
+            # 有可达候选 -> VLM 只在可达候选中评分。
+            vlm_pool = ik_feasible
+        else:
+            # 严格保持“先 IK，后 VLM”：IK=0 的目标不再调用 VLM 硬评。
+            # 仍把候选透传给调度器记录可达率，但语义分保持 0，避免它被当作正常语义结果执行。
+            rospy.logwarn(
+                "semantic_reranker: 目标 %d 无 IK 可达候选，跳过 VLM 评分，仅透传 %d 个不可达候选供调度器记录。",
+                object_id,
+                len(candidate_pool),
+            )
+            return candidate_pool, {idx: 0.0 for idx in candidate_pool}, {
+                "object_id": object_id,
+                "selected_candidates": [],
+                "best_candidate": None,
+                "preferred_region": "no_ik_feasible",
+                "avoid_region": "unreachable",
+                "grasp_side": "unknown",
+                "reason": "no_ik_feasible_skip_vlm",
+                "overview_item": {
+                    "object_id": int(object_id),
+                    "bbox": [int(v) for v in bbox],
+                    "best_candidate": None,
+                    "best_label": "IK=0",
+                    "preferred_region": "no_ik_feasible",
+                    "candidates": overview_candidates,
+                },
+            }
+
+        # 不可达候选排到该目标列表末尾
+        trailing_indices = ik_infeasible
+
+        rospy.loginfo(
+            "semantic_reranker: 目标 %d IK 过滤 %d→%d (feasible=%d infeasible=%d)",
+            object_id,
+            len(candidate_pool),
+            len(vlm_pool),
+            len(ik_feasible),
+            len(ik_infeasible),
+        )
+
+        top_indices = vlm_pool[: self.max_candidates_per_object]
         if not top_indices:
             return None
+
+        if skip_vlm:
+            ordered = list(vlm_pool) + [idx for idx in trailing_indices if idx not in vlm_pool]
+            feasible_set = set(vlm_pool)
+            chosen_scores = {
+                idx: (max(0.0, 1.0 - 0.05 * rank) if idx in feasible_set else 0.0)
+                for rank, idx in enumerate(ordered)
+            }
+            return ordered, chosen_scores, {
+                "object_id": object_id,
+                "selected_candidates": [int(idx) for idx in vlm_pool[: self.max_candidates_per_object]],
+                "best_candidate": int(ordered[0]) if ordered else None,
+                "preferred_region": "ik_feasible_raw_order",
+                "avoid_region": "none",
+                "grasp_side": "unknown",
+                "reason": "single_object_skip_vlm",
+                "overview_item": {
+                    "object_id": int(object_id),
+                    "bbox": [int(v) for v in bbox],
+                    "best_candidate": int(ordered[0]) if ordered else None,
+                    "best_label": "IK+raw",
+                    "preferred_region": "single_object_skip_vlm",
+                    "candidates": overview_candidates,
+                },
+            }
 
         if len(top_indices) == 1 and len(indices) == 1:
             only_idx = top_indices[0]
@@ -492,6 +578,14 @@ class SemanticRerankerNode:
             key=lambda idx: (chosen_scores.get(idx, 0.0), raw_scores[idx]),
             reverse=True,
         )
+
+        # IK 不可达候选强制排在末尾（仅按原始分数排序）
+        if trailing_indices:
+            vlm_scored = [idx for idx in ordered_indices if idx not in trailing_indices]
+            trailing_ordered = sorted(
+                trailing_indices, key=lambda idx: raw_scores[idx], reverse=True
+            )
+            ordered_indices = vlm_scored + trailing_ordered
 
         best_local_index = int(result.get("best_index", 1)) - 1
         best_local_index = min(max(best_local_index, 0), len(visible_indices) - 1)
@@ -655,9 +749,6 @@ class SemanticRerankerNode:
         return crop, labels, visible_indices, candidate_meta
 
     def query_vlm_for_candidates(self, crop_image, labels, candidate_meta):
-        if self.client is None:
-            return None
-
         ok, buffer = cv2.imencode(".jpg", crop_image)
         if not ok:
             return None
@@ -829,7 +920,11 @@ class SemanticRerankerNode:
             cv2.rectangle(vis, (xmin, ymin), (xmax, ymax), dark_outline, 4)
             cv2.rectangle(vis, (xmin, ymin), (xmax, ymax), color, 2)
 
-            best_candidate = int(item.get("best_candidate", -1))
+            best_candidate_raw = item.get("best_candidate", None)
+            try:
+                best_candidate = int(best_candidate_raw) if best_candidate_raw is not None else None
+            except Exception:
+                best_candidate = None
             for candidate in item.get("candidates", []):
                 center_px = candidate.get("center_px")
                 arrow_end_px = candidate.get("arrow_end_px")
@@ -837,7 +932,7 @@ class SemanticRerankerNode:
                     continue
 
                 candidate_index = int(candidate.get("candidate_index", -1))
-                is_best = candidate_index == best_candidate
+                is_best = best_candidate is not None and candidate_index == best_candidate
                 thickness = 4 if is_best else 1
                 radius = 7 if is_best else 2
                 draw_color = color if candidate.get("width_ok", True) else (170, 170, 170)

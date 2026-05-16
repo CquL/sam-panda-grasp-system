@@ -1,19 +1,47 @@
 <launch>
-  <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY)" />
-  <arg name="vlm_model" default="$(optenv VLM_MODEL qwen-vl-max)" />
-  <arg name="vlm_base_url" default="$(optenv DASHSCOPE_BASE_URL https://dashscope.aliyuncs.com/compatible-mode/v1)" />
+  <!-- 单点配置：只启动这个 launch 时，在这里填一次即可 -->
+  <arg name="vlm_api_key" default="sk-a85a76a8ada94ef2886ecd43bf0f9e80" />
+  <arg name="vlm_model" default="qwen-vl-max" />
+  <arg name="vlm_base_url" default="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+  <arg name="global_vlm_timeout_sec" default="20.0" />
+  <arg name="global_vlm_max_retries" default="2" />
+  <arg name="global_vlm_allow_partial_targets" default="false" />
+  <arg name="semantic_vlm_timeout_sec" default="10.0" />
+  <arg name="semantic_vlm_max_retries" default="0" />
+  <arg name="semantic_vlm_parallel_workers" default="2" />
+  <arg name="semantic_skip_vlm_for_single_object" default="true" />
+  <arg name="semantic_max_candidates_per_object" default="3" />
+  <arg name="semantic_overview_candidates_per_object" default="15" />
+  <arg name="semantic_output_candidates_per_object" default="6" />
+  <arg name="ik_filter_timeout_sec" default="0.10" />
+  <arg name="ik_filter_max_feasible_per_object" default="6" />
+  <arg name="ik_filter_max_ik_checks_per_object" default="10" />
+  <arg name="execution_ik_max_observation_attempts" default="8" />
   <arg name="save_thesis_figures" default="false" />
   <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
   <arg name="center_penalty_weight" default="1.5" />
+  <arg name="height_center_penalty_weight" default="1.00" />
+  <arg name="enforce_grasp_height_band" default="true" />
+  <arg name="min_grasp_height_fraction" default="0.30" />
+  <arg name="max_grasp_height_fraction" default="0.85" />
   <arg name="semantic_center_offset_weight" default="0.18" />
   <arg name="use_iterative_wrist_alignment" default="false" />
-  <arg name="use_final_wrist_alignment" default="false" />
-  <arg name="wrist_alignment_allow_vertical" default="false" />
+  <arg name="use_final_wrist_alignment" default="true" />
+  <arg name="wrist_alignment_allow_vertical" default="true" />
+  <arg name="wrist_alignment_use_camera_plane_tf" default="true" />
+  <arg name="final_preinsert_world_z_lift" default="0.0005" />
+  <arg name="wrist_vlm_timeout_sec" default="4.0" />
+  <arg name="require_wrist_alignment" default="false" />
+  <arg name="wrist_alignment_before_pregrasp" default="true" />
+  <arg name="cartesian_retime" default="true" />
+  <arg name="cartesian_velocity_scaling" default="0.40" />
+  <arg name="cartesian_acceleration_scaling" default="0.30" />
   <arg name="launch_wrist_grasp_refiner" default="false" />
   <arg name="use_wrist_grasp_refinement" default="false" />
   <arg name="wrist_visibility_fallback_max_insert" default="0.09" />
   <arg name="wrist_insert_allow_shorten" default="false" />
   <arg name="simple_front_grasp_mode" default="true" />
+  <arg name="force_shelf_normal_approach" default="false" />
   <arg name="simple_front_insert_extra_depth" default="0.010" />
   <arg name="simple_front_extra_retreat" default="0.080" />
   <arg name="grasp_pose_approach_axis" default="+z" />
@@ -98,18 +126,33 @@
     <arg name="launch_wrist_vlm" value="true" />
     <arg name="launch_wrist_grasp_refiner" value="$(arg launch_wrist_grasp_refiner)" />
     <arg name="launch_global_vlm" value="true" />
+    <arg name="global_vlm_timeout_sec" value="$(arg global_vlm_timeout_sec)" />
+    <arg name="global_vlm_max_retries" value="$(arg global_vlm_max_retries)" />
+    <arg name="global_vlm_allow_partial_targets" value="$(arg global_vlm_allow_partial_targets)" />
+    <arg name="launch_ik_filter" value="true" />
     <arg name="launch_semantic_reranker" value="true" />
     <arg name="scheduler_pose_topic" value="/graspnet/grasp_pose_array_semantic" />
     <arg name="scheduler_info_topic" value="/graspnet/grasp_info_semantic" />
-    <arg name="enable_scheduler_fallback" value="true" />
-    <arg name="fallback_timeout_sec" value="12.0" />
+    <arg name="enable_scheduler_fallback" value="false" />
+    <arg name="fallback_timeout_sec" value="30.0" />
+    <arg name="semantic_fallback_timeout_min" value="30.0" />
+    <arg name="allow_unreachable_candidate_dispatch" value="false" />
     <arg name="semantic_weight" value="0.35" />
     <arg name="reachability_weight" value="0.15" />
     <arg name="per_task_candidate_count" value="6" />
-    <arg name="scheduler_ik_seed_trials" value="4" />
-    <arg name="scheduler_ik_timeout_sec" value="0.35" />
-    <arg name="semantic_vlm_timeout_sec" value="10.0" />
-    <arg name="semantic_vlm_parallel_workers" value="2" />
+    <arg name="scheduler_ik_seed_trials" value="2" />
+    <arg name="scheduler_ik_timeout_sec" value="0.12" />
+    <arg name="semantic_vlm_timeout_sec" value="$(arg semantic_vlm_timeout_sec)" />
+    <arg name="semantic_vlm_max_retries" value="$(arg semantic_vlm_max_retries)" />
+    <arg name="semantic_vlm_parallel_workers" value="$(arg semantic_vlm_parallel_workers)" />
+    <arg name="semantic_skip_vlm_for_single_object" value="$(arg semantic_skip_vlm_for_single_object)" />
+    <arg name="semantic_max_candidates_per_object" value="$(arg semantic_max_candidates_per_object)" />
+    <arg name="semantic_overview_candidates_per_object" value="$(arg semantic_overview_candidates_per_object)" />
+    <arg name="semantic_output_candidates_per_object" value="$(arg semantic_output_candidates_per_object)" />
+    <arg name="ik_filter_timeout_sec" value="$(arg ik_filter_timeout_sec)" />
+    <arg name="ik_filter_max_feasible_per_object" value="$(arg ik_filter_max_feasible_per_object)" />
+    <arg name="ik_filter_max_ik_checks_per_object" value="$(arg ik_filter_max_ik_checks_per_object)" />
+    <arg name="execution_ik_max_observation_attempts" value="$(arg execution_ik_max_observation_attempts)" />
     <arg name="max_observation_search_time" value="20.0" />
     <arg name="observation_ik_avoid_collisions" value="false" />
     <arg name="observation_ik_seed_trials" value="2" />
@@ -118,14 +161,27 @@
     <arg name="place_ik_timeout_sec" value="0.35" />
     <arg name="place_ik_seed_trials" value="3" />
     <arg name="center_penalty_weight" value="$(arg center_penalty_weight)" />
+    <arg name="height_center_penalty_weight" value="$(arg height_center_penalty_weight)" />
+    <arg name="enforce_grasp_height_band" value="$(arg enforce_grasp_height_band)" />
+    <arg name="min_grasp_height_fraction" value="$(arg min_grasp_height_fraction)" />
+    <arg name="max_grasp_height_fraction" value="$(arg max_grasp_height_fraction)" />
     <arg name="semantic_center_offset_weight" value="$(arg semantic_center_offset_weight)" />
     <arg name="use_iterative_wrist_alignment" value="$(arg use_iterative_wrist_alignment)" />
     <arg name="use_final_wrist_alignment" value="$(arg use_final_wrist_alignment)" />
     <arg name="wrist_alignment_allow_vertical" value="$(arg wrist_alignment_allow_vertical)" />
+    <arg name="wrist_alignment_use_camera_plane_tf" value="$(arg wrist_alignment_use_camera_plane_tf)" />
+    <arg name="final_preinsert_world_z_lift" value="$(arg final_preinsert_world_z_lift)" />
+    <arg name="wrist_vlm_timeout_sec" value="$(arg wrist_vlm_timeout_sec)" />
+    <arg name="require_wrist_alignment" value="$(arg require_wrist_alignment)" />
+    <arg name="wrist_alignment_before_pregrasp" value="$(arg wrist_alignment_before_pregrasp)" />
+    <arg name="cartesian_retime" value="$(arg cartesian_retime)" />
+    <arg name="cartesian_velocity_scaling" value="$(arg cartesian_velocity_scaling)" />
+    <arg name="cartesian_acceleration_scaling" value="$(arg cartesian_acceleration_scaling)" />
     <arg name="use_wrist_grasp_refinement" value="$(arg use_wrist_grasp_refinement)" />
     <arg name="wrist_visibility_fallback_max_insert" value="$(arg wrist_visibility_fallback_max_insert)" />
     <arg name="wrist_insert_allow_shorten" value="$(arg wrist_insert_allow_shorten)" />
     <arg name="simple_front_grasp_mode" value="$(arg simple_front_grasp_mode)" />
+    <arg name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
     <arg name="simple_front_insert_extra_depth" value="$(arg simple_front_insert_extra_depth)" />
     <arg name="simple_front_extra_retreat" value="$(arg simple_front_extra_retreat)" />
     <arg name="grasp_pose_approach_axis" value="$(arg grasp_pose_approach_axis)" />

@@ -24,7 +24,7 @@ import open3d as o3d
 import sensor_msgs.point_cloud2 as pc2
 from std_srvs.srv import Empty, EmptyResponse
 from gazebo_msgs.srv import GetModelState
-from ros_image_compat import image_msg_to_numpy
+from sam_perception.ros_image_compat import image_msg_to_numpy
 
 class SAMPerceptionNode:
     def __init__(self):
@@ -94,11 +94,7 @@ class SAMPerceptionNode:
         )
         
         package_path = os.path.dirname(os.path.dirname(__file__))
-        default_checkpoint = os.environ.get(
-            "SAM_CHECKPOINT_PATH",
-            os.path.join(package_path, "models", "sam_vit_b_01ec64.pth"),
-        )
-        checkpoint = rospy.get_param("~checkpoint_path", default_checkpoint)
+        checkpoint = os.path.join(package_path, "models", "sam_vit_b_01ec64.pth")
         
         if not os.path.exists(checkpoint):
             rospy.logerr(f"❌ 找不到权重文件: {checkpoint}")

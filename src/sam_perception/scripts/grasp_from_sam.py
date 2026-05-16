@@ -19,7 +19,7 @@ import tf2_ros
 from gazebo_msgs.srv import GetModelState
 import open3d as o3d
 from visualization_msgs.msg import Marker, MarkerArray
-from ros_image_compat import image_msg_to_numpy
+from sam_perception.ros_image_compat import image_msg_to_numpy
 
 # 环境配置 (保持你原有的路径)
 GRASPNET_ROOT = os.path.join(os.path.expanduser('~'), 'grasp_robot_ws', 'graspnet-baseline')
@@ -293,8 +293,13 @@ class SamGraspNode:
             "forward_alignment": np.zeros(num_candidates, dtype=np.float32),
             "cavity_clearance_norm": np.zeros(num_candidates, dtype=np.float32),
             "neighbor_clearance_norm": np.zeros(num_candidates, dtype=np.float32),
+            "height_center_penalty_norm": np.zeros(num_candidates, dtype=np.float32),
+            "height_valid_mask": np.ones(num_candidates, dtype=bool),
+            "height_fraction": np.full(num_candidates, 0.5, dtype=np.float32),
             "context_valid_mask": np.ones(num_candidates, dtype=bool),
             "inside_mask": np.zeros(num_candidates, dtype=bool),
+            "object_z_min": None,
+            "object_z_max": None,
         }
         sensor_to_world = self.get_sensor_to_world_matrix(source_frame)
         if sensor_to_world is None:
@@ -310,6 +315,38 @@ class SamGraspNode:
         translations_world = (rot_sensor_to_world @ translations.T).T + sensor_to_world[:3, 3]
         translations_world_h = np.hstack([translations_world, np.ones((num_candidates, 1), dtype=np.float64)])
         translations_local = (world_to_shelf @ translations_world_h.T).T[:, :3]
+
+        height_center_penalty_norm = np.zeros(num_candidates, dtype=np.float32)
+        height_valid_mask = np.ones(num_candidates, dtype=bool)
+        height_fraction = np.full(num_candidates, 0.5, dtype=np.float32)
+        object_z_min = None
+        object_z_max = None
+        object_points = xyz[object_ids == current_object_id]
+        if len(object_points) >= 30:
+            object_points_h = np.hstack(
+                [object_points.astype(np.float64), np.ones((len(object_points), 1), dtype=np.float64)]
+            )
+            object_points_world = (sensor_to_world @ object_points_h.T).T
+            object_points_local = (world_to_shelf @ object_points_world.T).T[:, :3]
+            z_lo = float(np.percentile(object_points_local[:, 2], 5.0))
+            z_hi = float(np.percentile(object_points_local[:, 2], 95.0))
+            z_span = z_hi - z_lo
+            if z_span > 0.025:
+                min_frac = float(rospy.get_param("~min_grasp_height_fraction", 0.30))
+                max_frac = float(rospy.get_param("~max_grasp_height_fraction", 0.85))
+                if min_frac > max_frac:
+                    min_frac, max_frac = max_frac, min_frac
+                min_frac = float(np.clip(min_frac, 0.0, 1.0))
+                max_frac = float(np.clip(max_frac, 0.0, 1.0))
+                height_fraction = ((translations_local[:, 2] - z_lo) / z_span).astype(np.float32)
+                height_center_penalty_norm = np.clip(
+                    np.abs(height_fraction - 0.5) / 0.5,
+                    0.0,
+                    1.5,
+                ).astype(np.float32)
+                height_valid_mask = (height_fraction >= min_frac) & (height_fraction <= max_frac)
+                object_z_min = z_lo
+                object_z_max = z_hi
 
         approach_world = np.einsum("ij,njk->nik", rot_sensor_to_world, rotations)[:, :, 2]
         approach_local = (rot_world_to_shelf @ approach_world.T).T
@@ -365,8 +402,13 @@ class SamGraspNode:
             "forward_alignment": forward_alignment,
             "cavity_clearance_norm": cavity_clearance_norm,
             "neighbor_clearance_norm": neighbor_clearance_norm,
+            "height_center_penalty_norm": height_center_penalty_norm,
+            "height_valid_mask": height_valid_mask,
+            "height_fraction": height_fraction,
             "context_valid_mask": context_valid_mask,
             "inside_mask": inside_mask,
+            "object_z_min": object_z_min,
+            "object_z_max": object_z_max,
         }
 
     def callback(self, pc_msg):
@@ -393,6 +435,8 @@ class SamGraspNode:
             width_preference_weight = float(rospy.get_param("~width_preference_weight", 0.35))
             shelf_clearance_weight = float(rospy.get_param("~shelf_clearance_weight", 0.45))
             neighbor_clearance_weight = float(rospy.get_param("~neighbor_clearance_weight", 0.35))
+            height_center_penalty_weight = float(rospy.get_param("~height_center_penalty_weight", 1.00))
+            enforce_grasp_height_band = bool(rospy.get_param("~enforce_grasp_height_band", True))
             allow_clearance_fallback = bool(rospy.get_param("~allow_clearance_fallback", False))
             enable_box_fallback_grasp = bool(rospy.get_param("~enable_box_fallback_grasp", True))
             enable_width_filter = bool(rospy.get_param("~enable_width_filter", True))
@@ -520,12 +564,14 @@ class SamGraspNode:
                 forward_alignment = context["forward_alignment"]
                 cavity_clearance_norm = context["cavity_clearance_norm"]
                 neighbor_clearance_norm = context["neighbor_clearance_norm"]
+                height_center_penalty_norm = context["height_center_penalty_norm"]
                 corrected_scores = (
                     scores
                     - (penalty_weight * normalized_distances)
                     + (front_alignment_weight * forward_alignment)
                     + (shelf_clearance_weight * cavity_clearance_norm)
                     + (neighbor_clearance_weight * neighbor_clearance_norm)
+                    - (height_center_penalty_weight * height_center_penalty_norm)
                 )
 
                 valid_indices = np.arange(len(corrected_scores), dtype=np.int32)
@@ -564,6 +610,40 @@ class SamGraspNode:
                             continue
                 width_valid_indices = valid_indices.copy()
 
+                height_valid_indices = np.flatnonzero(context["height_valid_mask"]).astype(np.int32)
+                if (
+                    enforce_grasp_height_band
+                    and len(height_valid_indices) > 0
+                    and len(height_valid_indices) < len(valid_indices)
+                ):
+                    filtered_indices = np.intersect1d(
+                        valid_indices,
+                        height_valid_indices,
+                        assume_unique=False,
+                    )
+                    if len(filtered_indices) > 0:
+                        removed_count = int(len(valid_indices) - len(filtered_indices))
+                        z_min = context.get("object_z_min")
+                        z_max = context.get("object_z_max")
+                        if z_min is not None and z_max is not None:
+                            rospy.loginfo(
+                                "目标 %s: 高度带过滤剔除 %d 个候选 "
+                                "(object_z=[%.3f, %.3f], keep_fraction=[%.2f, %.2f])",
+                                str(object_id),
+                                removed_count,
+                                float(z_min),
+                                float(z_max),
+                                float(rospy.get_param("~min_grasp_height_fraction", 0.30)),
+                                float(rospy.get_param("~max_grasp_height_fraction", 0.85)),
+                            )
+                        else:
+                            rospy.loginfo(f"目标 {object_id}: 高度带过滤剔除 {removed_count} 个候选")
+                        valid_indices = filtered_indices
+                    else:
+                        rospy.logwarn(
+                            f"目标 {object_id}: 高度带过滤会剔除所有候选，保留软惩罚结果避免 IK=0。"
+                        )
+
                 context_valid_indices = np.flatnonzero(context["context_valid_mask"]).astype(np.int32)
                 if len(context_valid_indices) > 0 and len(context_valid_indices) < len(valid_indices):
                     context_invalid_count = int(np.count_nonzero(~context["context_valid_mask"]))
@@ -594,7 +674,17 @@ class SamGraspNode:
                 top_k = min(self.top_k_per_object, len(ranked_valid))
                 top_indices = ranked_valid[:top_k]
                 raw_top_indices = np.argsort(-raw_scores)[: min(self.top_k_per_object, len(raw_scores))]
-                rospy.loginfo(f"目标 {object_id}: 保留姿态 {top_k} 个")
+                top_height_fraction = context["height_fraction"][top_indices]
+                if np.all(np.isfinite(top_height_fraction)):
+                    rospy.loginfo(
+                        "目标 %s: 保留姿态 %d 个 (z_fraction=%.2f..%.2f)",
+                        str(object_id),
+                        top_k,
+                        float(np.min(top_height_fraction)),
+                        float(np.max(top_height_fraction)),
+                    )
+                else:
+                    rospy.loginfo(f"目标 {object_id}: 保留姿态 {top_k} 个")
 
                 raw_rot_vis.append(raw_rotations)
                 raw_trans_vis.append(raw_translations)

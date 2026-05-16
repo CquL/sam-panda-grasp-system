@@ -1797,6 +1797,11 @@ class PickPlaceDemo:
 
         rospy.sleep(0.5)
 
+        # 抓取前务必再打开一次夹爪，确保完全张开
+        rospy.loginfo("[6/6] 抓取前打开夹爪...")
+        self.gripper.open(width=0.08)
+        rospy.sleep(0.3)
+
         command_width, lightly_shrunk_width = self.compute_command_grasp_width(chosen_width)
         rospy.loginfo(
             f"[6/6] 闭合夹爪 (预测宽度: {chosen_width:.3f}m, "

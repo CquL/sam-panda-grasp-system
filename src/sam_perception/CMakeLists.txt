@@ -108,7 +108,7 @@ catkin_python_setup()
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES sam_perception
-  CATKIN_DEPENDS cv_bridge geometry_msgs rospy sensor_msgs std_msgs visualization_msgs
+#  CATKIN_DEPENDS cv_bridge rospy sensor_msgs std_msgs
 #  DEPENDS system_lib
 )
 
@@ -163,14 +163,13 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  scripts/check_cam.py
-  scripts/check_models.py
   scripts/experiment_logger.py
   scripts/global_vlm_target_node.py
+  scripts/grasp_from_bbox.py
   scripts/grasp_from_sam.py
+  scripts/ik_filter.py
   scripts/llm_planner.py
   scripts/pointcloud_debugger.py
-  scripts/ros_image_compat.py
   scripts/sam_node.py
   scripts/semantic_reranker.py
   scripts/task_command_cli.py

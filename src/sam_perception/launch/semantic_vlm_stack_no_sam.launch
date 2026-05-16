@@ -1,0 +1,198 @@
+<launch>
+  <!-- ============================================================
+       VLM + GraspNet 消融实验（无 SAM 对比管线）
+       与 semantic_vlm_stack.launch 的区别：
+         - 不启动 sam_node.py
+         - 改为启动 grasp_from_bbox.py（VLM bbox → 点云，无 SAM 精细分割）
+         - scene_label 默认为 "no_sam" 以区分实验结果
+       ============================================================ -->
+
+  <!-- 单点配置 -->
+  <arg name="scene_label" default="no_sam" />
+  <arg name="experiment_notes" default="VLM+GraspNet (no SAM ablation)" />
+  <arg name="anygrasp_python" default="/home/lhj/anaconda3/envs/anygrasp_env/bin/python" />
+
+  <arg name="vlm_api_key" default="sk-a85a76a8ada94ef2886ecd43bf0f9e80" />
+  <arg name="vlm_model" default="qwen-vl-max" />
+  <arg name="vlm_base_url" default="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+  <arg name="save_thesis_figures" default="false" />
+  <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
+
+  <!-- 抓取参数 -->
+  <arg name="center_penalty_weight" default="1.5" />
+  <arg name="semantic_center_offset_weight" default="0.18" />
+  <arg name="front_alignment_weight" default="0.55" />
+  <arg name="width_preference_weight" default="0.35" />
+  <arg name="shelf_clearance_weight" default="0.45" />
+  <arg name="neighbor_clearance_weight" default="0.35" />
+  <arg name="gripper_width_max" default="0.078" />
+  <arg name="gripper_width_margin" default="0.006" />
+  <arg name="top_k_per_object" default="15" />
+  <arg name="grasp_sampling_passes" default="3" />
+  <arg name="enable_box_fallback_grasp" default="true" />
+  <arg name="enable_width_filter" default="true" />
+
+  <!-- 调度参数 -->
+  <arg name="semantic_weight" default="0.35" />
+  <arg name="reachability_weight" default="0.15" />
+  <arg name="strict_width_filter" default="true" />
+
+  <!-- bbox→点云参数 -->
+  <arg name="bbox_shrink_ratio" default="0.05" />
+  <arg name="depth_gate_band" default="0.10" />
+
+  <!-- ===== 1. Gazebo + MoveIt 底层 ===== -->
+  <include file="$(find panda_moveit_config)/launch/demo_gazebo_system.launch">
+    <arg name="paused" value="false"/>
+    <arg name="gazebo_gui" value="true"/>
+  </include>
+
+  <!-- depth camera → world 静态 TF -->
+  <node pkg="tf" type="static_transform_publisher"
+      name="depth_camera_tf"
+      args="-0.032146 -0.289119 0.562988 -1.57 0 -1.57 world depth_camera_link 100" />
+
+  <!-- ===== 2. 替代 SAM：VLM bbox 直接转点云 ===== -->
+  <node pkg="sam_perception" type="grasp_from_bbox.py" name="grasp_from_bbox" output="screen"
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(arg anygrasp_python)">
+    <param name="bbox_topic" value="/sam/prompt_bbox" />
+    <param name="global_target_topic" value="/vlm/global_target" />
+    <param name="global_target_image_topic" value="/vlm/global_target_image" />
+    <param name="rgb_topic" value="/camera/color/image_raw" />
+    <param name="depth_topic" value="/camera/depth/image_raw" />
+    <param name="camera_info_topic" value="/camera/color/camera_info" />
+    <param name="cloud_topic" value="/sam_perception/object_cloud" />
+    <param name="metadata_topic" value="/sam_perception/object_metadata" />
+    <param name="min_depth" value="0.10" />
+    <param name="max_depth" value="2.00" />
+    <param name="depth_front_percentile" value="15.0" />
+    <param name="depth_gate_band" value="$(arg depth_gate_band)" />
+    <param name="bbox_shrink_ratio" value="$(arg bbox_shrink_ratio)" />
+    <param name="publish_background" value="false" />
+    <param name="save_debug" value="true" />
+    <param name="debug_dir" value="$(env HOME)/grasp_robot_ws/pointcloud_debug" />
+  </node>
+
+  <!-- ===== 3. GraspNet（订阅 /sam_perception/object_cloud，与 SAM 管线相同） ===== -->
+  <node pkg="sam_perception" type="grasp_from_sam.py" name="grasp_from_sam" output="screen"
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(arg anygrasp_python)">
+    <param name="model_type" value="vit_b" />
+    <param name="save_thesis_figures" value="$(arg save_thesis_figures)" />
+    <param name="figure_output_dir" value="$(arg figure_output_dir)" />
+    <param name="visualize_grasp_on_depth" value="false" />
+    <param name="visualize_grasp_o3d" value="false" />
+    <param name="top_k_per_object" value="$(arg top_k_per_object)" />
+    <param name="grasp_sampling_passes" value="$(arg grasp_sampling_passes)" />
+    <param name="center_penalty_weight" value="$(arg center_penalty_weight)" />
+    <param name="front_alignment_weight" value="$(arg front_alignment_weight)" />
+    <param name="width_preference_weight" value="$(arg width_preference_weight)" />
+    <param name="shelf_clearance_weight" value="$(arg shelf_clearance_weight)" />
+    <param name="neighbor_clearance_weight" value="$(arg neighbor_clearance_weight)" />
+    <param name="enable_box_fallback_grasp" value="$(arg enable_box_fallback_grasp)" />
+    <param name="enable_width_filter" value="$(arg enable_width_filter)" />
+    <param name="gripper_width_max" value="$(arg gripper_width_max)" />
+    <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
+    <param name="shelf_model_name" value="narrow_supermarket_shelf_enclosed_0" />
+    <param name="shelf_pose_fallback_x" value="0.737098" />
+    <param name="shelf_pose_fallback_y" value="-0.148598" />
+    <param name="shelf_pose_fallback_z" value="0.205537" />
+    <param name="shelf_pose_fallback_yaw" value="0.0" />
+  </node>
+
+  <!-- ===== 3.5 IK filter（GraspNet raw → IK 可达性过滤） ===== -->
+  <node pkg="sam_perception" type="ik_filter.py" name="ik_filter" output="screen"
+      launch-prefix="/usr/bin/python3">
+    <param name="pose_topic_in" value="/graspnet/grasp_pose_array_raw" />
+    <param name="info_topic_in" value="/graspnet/grasp_info_raw" />
+    <param name="pose_topic_out" value="/graspnet/grasp_pose_array_ik" />
+    <param name="info_topic_out" value="/graspnet/grasp_info_ik" />
+    <param name="ik_timeout" value="0.15" />
+    <param name="min_feasible_per_object" value="1" />
+  </node>
+
+  <!-- ===== 4. Global VLM（任务理解 → bbox） ===== -->
+  <node pkg="sam_perception" type="global_vlm_target_node.py" name="global_vlm_target_node" output="screen"
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(arg anygrasp_python)">
+    <param name="api_key" value="$(arg vlm_api_key)" />
+    <param name="model" value="$(arg vlm_model)" />
+    <param name="base_url" value="$(arg vlm_base_url)" />
+  </node>
+
+  <!-- ===== 5. Semantic Reranker（VLM 重排 IK 可达抓取候选） ===== -->
+  <node pkg="sam_perception" type="semantic_reranker.py" name="semantic_reranker" output="screen"
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(arg anygrasp_python)">
+    <param name="api_key" value="$(arg vlm_api_key)" />
+    <param name="model" value="$(arg vlm_model)" />
+    <param name="base_url" value="$(arg vlm_base_url)" />
+    <param name="pose_topic" value="/graspnet/grasp_pose_array_ik" />
+    <param name="info_topic" value="/graspnet/grasp_info_ik" />
+    <param name="strict_width_filter" value="$(arg strict_width_filter)" />
+    <param name="gripper_width_max" value="$(arg gripper_width_max)" />
+    <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
+    <param name="vlm_timeout_sec" value="10.0" />
+    <param name="vlm_parallel_workers" value="2" />
+    <param name="skip_vlm_for_single_object" value="true" />
+    <param name="center_offset_weight" value="$(arg semantic_center_offset_weight)" />
+    <param name="target_image_topic" value="/vlm/global_target_image" />
+  </node>
+
+  <!-- ===== 6. Wrist VLM ===== -->
+  <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
+      launch-prefix="env LD_PRELOAD=$(optenv ANYGRASP_LD_PRELOAD) $(arg anygrasp_python)">
+    <param name="api_key" value="$(arg vlm_api_key)" />
+    <param name="model" value="$(arg vlm_model)" />
+    <param name="base_url" value="$(arg vlm_base_url)" />
+  </node>
+
+  <!-- ===== 7. GTSP 调度器 ===== -->
+  <node pkg="panda_pick_place" type="gtsp_scheduler.py" name="gtsp_scheduler_node" output="screen"
+      launch-prefix="/usr/bin/python3">
+    <param name="pose_topic" value="/graspnet/grasp_pose_array_semantic" />
+    <param name="info_topic" value="/graspnet/grasp_info_semantic" />
+    <param name="fallback_pose_topic" value="/graspnet/grasp_pose_array_raw" />
+    <param name="fallback_info_topic" value="/graspnet/grasp_info_raw" />
+    <param name="fallback_timeout_sec" value="12.0" />
+    <param name="enable_fallback" value="true" />
+    <param name="semantic_weight" value="$(arg semantic_weight)" />
+    <param name="reachability_weight" value="$(arg reachability_weight)" />
+    <param name="per_task_candidate_count" value="6" />
+    <param name="allow_unreachable_candidate_dispatch" value="true" />
+    <param name="ik_seed_trials" value="4" />
+    <param name="ik_timeout_sec" value="0.35" />
+    <param name="semantic_fallback_timeout_min" value="12.0" />
+  </node>
+
+  <!-- ===== 8. Demo 执行节点 ===== -->
+  <node pkg="panda_pick_place" type="demo.py" name="pick_place_service" output="screen"
+        launch-prefix="/usr/bin/python3">
+    <param name="planner_id" value="panda_manipulator[RRTConnect]" />
+    <param name="use_fixed_shelf_collision" value="false" />
+    <param name="force_shelf_normal_approach" value="false" />
+    <param name="simple_front_grasp_mode" value="true" />
+    <param name="simple_front_insert_extra_depth" value="0.010" />
+    <param name="simple_front_extra_retreat" value="0.080" />
+    <param name="grasp_pose_approach_axis" value="+z" />
+    <param name="grasp_pose_open_axis" value="+x" />
+    <param name="enforce_horizontal_gripper_open_axis" value="true" />
+    <param name="max_gripper_open_axis_vertical_component" value="0.25" />
+    <param name="grasp_transport_mode" value="force_only" />
+    <param name="grasp_force" value="50.0" />
+    <param name="grasp_width_margin" value="0.008" />
+    <param name="grasp_command_width_min" value="0.008" />
+    <param name="grasp_command_width_max" value="0.078" />
+    <param name="post_grasp_lift_distance" value="0.015" />
+    <param name="enable_grasp_resqueeze_retry" value="true" />
+    <param name="simple_place_drop" value="true" />
+    <param name="fast_drop_when_inside_basket" value="true" />
+    <param name="max_observation_search_time" value="20.0" />
+  </node>
+
+  <!-- ===== 9. 实验记录器 ===== -->
+  <include file="$(find sam_perception)/launch/experiment_logger.launch">
+    <arg name="scene_label" value="$(arg scene_label)" />
+    <arg name="pipeline_variant" value="vlm_graspnet" />
+    <arg name="notes" value="$(arg experiment_notes)" />
+    <arg name="output_file" value="$(env HOME)/grasp_robot_ws/experiment_results/end_to_end_metrics.csv" />
+  </include>
+
+</launch>

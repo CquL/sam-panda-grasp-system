@@ -13,22 +13,24 @@ import cv2
 import base64
 import ast
 import re
+import time
 from openai import OpenAI
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Float32MultiArray
-from ros_image_compat import image_msg_to_numpy
+from sam_perception.ros_image_compat import image_msg_to_numpy
 
 class WristVLMNode:
     def __init__(self):
         rospy.init_node('wrist_vlm_node')
         self.latest_image = None
-        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
-        self.base_url = rospy.get_param(
-            "~base_url",
-            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        )
+        self.model_name = rospy.get_param("~model", "qwen-vl-max")
+        self.base_url = rospy.get_param("~base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 4.0))
+        self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 0)))
+        self.max_image_side = max(160, int(rospy.get_param("~max_image_side", 480)))
+        self.jpeg_quality = int(max(30, min(95, int(rospy.get_param("~jpeg_quality", 70)))))
         api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.api_key = api_key_param or env_api_key
         
         # 💥 加入以下代码：强制屏蔽系统代理，防止 httpx 崩溃
@@ -42,10 +44,12 @@ class WristVLMNode:
         if self.api_key:
             self.client = OpenAI(
                 api_key=self.api_key,
-                base_url=self.base_url
+                base_url=self.base_url,
+                timeout=self.vlm_timeout_sec,
+                max_retries=self.vlm_max_retries,
             )
         else:
-            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY，手腕 VLM 将返回空框。")
+            rospy.logwarn("⚠️ 未设置 DASHSCOPE_API_KEY / OPENAI_API_KEY，手腕 VLM 将返回空框。")
         
         # 订阅手腕相机画面
         rospy.Subscriber('/wrist_camera/color/image_raw', Image, self.image_cb, queue_size=1)
@@ -55,6 +59,47 @@ class WristVLMNode:
         self.pub_bbox = rospy.Publisher('/wrist_vlm/bbox', Float32MultiArray, queue_size=1)
         
         rospy.loginfo("👁️ 手腕 VLM 感知节点已就绪，等待触发...")
+
+    def parse_request_id(self, text):
+        match = re.search(r"(\d+)\s*$", str(text or ""))
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except Exception:
+            return None
+
+    def publish_bbox(self, request_id, bbox=None):
+        if bbox is None:
+            data = [float(request_id)] if request_id is not None else []
+        else:
+            data = ([float(request_id)] if request_id is not None else []) + [float(v) for v in bbox]
+        self.pub_bbox.publish(Float32MultiArray(data=data))
+
+    def prepare_image_for_vlm(self, img_cv):
+        h, w = img_cv.shape[:2]
+        max_side = max(h, w)
+        scale = 1.0
+        if max_side > self.max_image_side:
+            scale = float(self.max_image_side) / float(max_side)
+            img_cv = cv2.resize(img_cv, (int(round(w * scale)), int(round(h * scale))))
+        ok, buffer = cv2.imencode(".jpg", img_cv, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+        if not ok:
+            return None, 1.0
+        return buffer, scale
+
+    def scale_bbox_to_original(self, bbox, scale, image_w, image_h):
+        if not bbox or len(bbox) != 4:
+            return None
+        inv = 1.0 / max(float(scale), 1e-6)
+        xmin, ymin, xmax, ymax = [int(round(float(v) * inv)) for v in bbox]
+        xmin = max(0, min(image_w - 1, xmin))
+        xmax = max(0, min(image_w - 1, xmax))
+        ymin = max(0, min(image_h - 1, ymin))
+        ymax = max(0, min(image_h - 1, ymax))
+        if xmax <= xmin or ymax <= ymin:
+            return None
+        return [xmin, ymin, xmax, ymax]
 
     def image_cb(self, msg):
         try:
@@ -69,18 +114,25 @@ class WristVLMNode:
             )
 
     def trigger_cb(self, msg):
+        request_id = self.parse_request_id(getattr(msg, "data", ""))
+        t0 = time.time()
         if self.latest_image is None:
-            self.pub_bbox.publish(Float32MultiArray(data=[])) # 发空数组代表失败
+            self.publish_bbox(request_id, None) # 发空数组/请求号代表失败
             return
             
         if self.client is None:
-            rospy.logwarn("⚠️ 手腕 VLM 无可用 DASHSCOPE_API_KEY，本次触发返回空框。")
-            self.pub_bbox.publish(Float32MultiArray(data=[]))
+            rospy.logwarn("⚠️ 手腕 VLM 无可用 API key，本次触发返回空框。")
+            self.publish_bbox(request_id, None)
             return
 
-        rospy.loginfo("📸 收到触发信号，召唤千问提取目标框...")
+        rospy.loginfo("📸 收到触发信号，召唤千问提取目标框... request_id=%s", str(request_id))
         img_cv = self.latest_image.copy()
-        _, buffer = cv2.imencode('.jpg', img_cv)
+        image_h, image_w = img_cv.shape[:2]
+        prepared = self.prepare_image_for_vlm(img_cv)
+        if prepared[0] is None:
+            self.publish_bbox(request_id, None)
+            return
+        buffer, scale = prepared
         base64_img = base64.b64encode(buffer).decode('utf-8')
         
         prompt = "画面正中间有一个即将被抓取的商品。请精准框出它，严格返回二维数组格式如 [[xmin, ymin, xmax, ymax]]，绝对不要返回任何其他解释性文字。"
@@ -89,21 +141,27 @@ class WristVLMNode:
             res = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}, {"type": "text", "text": prompt}]}],
-                temperature=0.0
+                temperature=0.0,
+                timeout=self.vlm_timeout_sec,
             )
             result_text = res.choices[0].message.content
             match = re.search(r'\[\s*\[.*?\]\s*\]', result_text, re.DOTALL)
             
             if match:
                 boxes = ast.literal_eval(match.group(0))
-                bbox_msg = Float32MultiArray(data=boxes[0])
-                self.pub_bbox.publish(bbox_msg)
-                rospy.loginfo(f"✅ VLM 返回边框: {boxes[0]}")
+                bbox = self.scale_bbox_to_original(boxes[0], scale, image_w, image_h)
+                self.publish_bbox(request_id, bbox)
+                rospy.loginfo(
+                    "✅ VLM 返回边框: %s request_id=%s elapsed=%.2fs",
+                    str(bbox),
+                    str(request_id),
+                    time.time() - t0,
+                )
             else:
-                self.pub_bbox.publish(Float32MultiArray(data=[]))
+                self.publish_bbox(request_id, None)
         except Exception as e:
             rospy.logerr(f"VLM 请求失败: {e}")
-            self.pub_bbox.publish(Float32MultiArray(data=[]))
+            self.publish_bbox(request_id, None)
 
 if __name__ == '__main__':
     node = WristVLMNode()

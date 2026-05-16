@@ -15,6 +15,7 @@ class ExperimentLogger:
     FIELDNAMES = [
         "run_index",
         "scene_label",
+        "pipeline_variant",
         "notes",
         "wall_start",
         "start_sim_time",
@@ -42,6 +43,7 @@ class ExperimentLogger:
         rospy.init_node("experiment_logger")
 
         self.scene_label = rospy.get_param("~scene_label", "unknown")
+        self.pipeline_variant = rospy.get_param("~pipeline_variant", "vlm_sam_graspnet")
         self.notes = rospy.get_param("~notes", "")
         self.output_file = os.path.expanduser(
             rospy.get_param(
@@ -88,6 +90,7 @@ class ExperimentLogger:
         self.current_run = {
             "run_index": self.run_index,
             "scene_label": self.scene_label,
+            "pipeline_variant": self.pipeline_variant,
             "notes": self.notes,
             "wall_start": time.strftime("%Y-%m-%d %H:%M:%S"),
             "start_sim_time": sim_now,
@@ -226,6 +229,7 @@ class ExperimentLogger:
         row = {
             "run_index": run["run_index"],
             "scene_label": run["scene_label"],
+            "pipeline_variant": run["pipeline_variant"],
             "notes": run["notes"],
             "wall_start": run["wall_start"],
             "start_sim_time": f"{run['start_sim_time']:.3f}",

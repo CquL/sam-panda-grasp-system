@@ -18,7 +18,10 @@ import rospy
 from openai import OpenAI
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray, String
-from ros_image_compat import image_msg_to_numpy, numpy_to_image_msg
+from sam_perception.ros_image_compat import image_msg_to_numpy, numpy_to_image_msg
+
+
+DEFAULT_API_KEY = "sk-a85a76a8ada94ef2886ecd43bf0f9e80"
 
 
 class GlobalVLMTargetNode:
@@ -32,25 +35,27 @@ class GlobalVLMTargetNode:
         self.result_topic = rospy.get_param("~result_topic", "/vlm/global_target")
         self.snapshot_topic = rospy.get_param("~snapshot_topic", "/vlm/global_target_image")
         self.image_topic = rospy.get_param("~image_topic", "/camera/color/image_raw")
-        self.model_name = rospy.get_param("~model", os.environ.get("VLM_MODEL", "qwen-vl-max"))
+        self.model_name = rospy.get_param("~model", "qwen-vl-max")
         self.base_url = rospy.get_param(
             "~base_url",
-            os.environ.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        api_key_param = str(rospy.get_param("~api_key", "")).strip()
-        env_api_key = os.environ.get("DASHSCOPE_API_KEY")
-        self.api_key = api_key_param or env_api_key
+        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
         self.max_boxes = max(1, int(rospy.get_param("~max_boxes", 4)))
+        self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 20.0))
+        self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 2)))
+        self.allow_partial_targets = bool(rospy.get_param("~allow_partial_targets", False))
 
         proxy_vars = ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]
         for var in proxy_vars:
             os.environ.pop(var, None)
 
-        self.client = None
-        if self.api_key:
-            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        else:
-            rospy.logwarn("Global VLM has no DASHSCOPE_API_KEY; commands will return empty boxes.")
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.vlm_timeout_sec,
+            max_retries=0,
+        )
 
         rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         rospy.Subscriber(self.command_topic, String, self.command_cb, queue_size=1)
@@ -92,14 +97,39 @@ class GlobalVLMTargetNode:
             self.publish_failure(command, "no_image")
             return
 
-        if self.client is None:
-            rospy.logwarn("Global VLM has no API key, cannot process command: %s", command)
-            self.publish_failure(command, "missing_api_key")
-            self.pub_bbox.publish(Float32MultiArray(data=[]))
-            return
-
         rospy.loginfo("Global VLM processing command: %s", command)
-        result = self.query_vlm(command, self.latest_image)
+        expected_targets = self.extract_expected_targets(command)
+        result = None
+        entries = []
+        missing_targets = []
+        last_reason = "vlm_parse_failed"
+        for attempt_idx in range(self.vlm_max_retries + 1):
+            result = self.query_vlm(
+                command,
+                self.latest_image,
+                expected_targets=expected_targets,
+                attempt_idx=attempt_idx,
+                missing_targets=missing_targets,
+            )
+            if result is None:
+                last_reason = "vlm_parse_failed"
+                continue
+
+            entries = self.normalize_entries(result, self.latest_image.shape[1], self.latest_image.shape[0], command)
+            missing_targets = self.find_missing_expected_targets(entries, expected_targets)
+            if not missing_targets:
+                break
+
+            last_reason = "missing_expected_targets"
+            rospy.logwarn(
+                "Global VLM returned incomplete target set: expected=%s got=%s missing=%s attempt=%d/%d",
+                ",".join([item["name"] for item in expected_targets]),
+                ",".join([entry["target"] for entry in entries]) if entries else "<none>",
+                ",".join([item["name"] for item in missing_targets]),
+                attempt_idx + 1,
+                self.vlm_max_retries + 1,
+            )
+
         if result is None:
             preview = (self.last_result_text or "").replace("\n", " ").strip()
             if len(preview) > 240:
@@ -109,11 +139,25 @@ class GlobalVLMTargetNode:
                 command,
                 preview if preview else "<empty>",
             )
-            self.publish_failure(command, "vlm_parse_failed")
+            self.publish_failure(command, last_reason)
             self.pub_bbox.publish(Float32MultiArray(data=[]))
             return
 
-        entries = self.normalize_entries(result, self.latest_image.shape[1], self.latest_image.shape[0], command)
+        if missing_targets and not self.allow_partial_targets:
+            rospy.logwarn(
+                "Global VLM aborted partial task dispatch: command=%s expected=%s got=%s missing=%s",
+                command,
+                ",".join([item["name"] for item in expected_targets]),
+                ",".join([entry["target"] for entry in entries]) if entries else "<none>",
+                ",".join([item["name"] for item in missing_targets]),
+            )
+            self.publish_failure(
+                command,
+                "missing_expected_targets:" + ",".join([item["name"] for item in missing_targets]),
+            )
+            self.pub_bbox.publish(Float32MultiArray(data=[]))
+            return
+
         boxes = [entry["bbox"] for entry in entries]
         if len(boxes) == 0:
             rospy.logwarn("Global VLM produced zero valid bboxes after sanitize. result_keys=%s", list(result.keys()))
@@ -128,6 +172,7 @@ class GlobalVLMTargetNode:
             "confidence": confidence,
             "bboxes": boxes,
             "entries": entries,
+            "expected_targets": expected_targets,
         }
 
         flat_coords = [float(v) for box in boxes for v in box]
@@ -166,20 +211,99 @@ class GlobalVLMTargetNode:
             return False
         return True
 
-    def query_vlm(self, command, image_bgr):
+    def normalize_target_name(self, text):
+        text = str(text or "").strip().lower()
+        alias_groups = [
+            ("白砂糖", ["白砂糖", "砂糖", "糖", "sugar"]),
+            ("可乐", ["可乐", "coke", "cola", "coca"]),
+            ("啤酒", ["啤酒", "beer"]),
+            ("番茄罐头", ["番茄罐头", "番茄", "tomato"]),
+        ]
+        for canonical, aliases in alias_groups:
+            if any(alias in text for alias in aliases):
+                return canonical
+        cleanup_patterns = [
+            r"^抓",
+            r"^拿",
+            r"^取",
+            r"^(一个|一瓶|一罐|一盒|一袋|那罐|那个|这罐|这个)",
+            r"(最右边|最左边|右边|左边|中间|上面|下面|上层|下层|那罐|那个|这罐|这个)",
+        ]
+        cleaned = str(text)
+        for pattern in cleanup_patterns:
+            cleaned = re.sub(pattern, "", cleaned)
+        return cleaned.strip() or str(text).strip()
+
+    def extract_expected_targets(self, command):
+        text = str(command or "").strip()
+        if not text:
+            return []
+        normalized = text.replace("，", "、").replace(",", "、").replace("和", "、").replace("及", "、")
+        parts = [p.strip() for p in re.split(r"[、;；]+", normalized) if p.strip()]
+        targets = []
+        seen = set()
+        for part in parts:
+            if not any(token in part.lower() for token in ["可乐", "啤酒", "白砂糖", "砂糖", "糖", "番茄", "coke", "cola", "beer", "sugar", "tomato"]):
+                continue
+            name = self.normalize_target_name(part)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            targets.append({"name": name, "phrase": part})
+        return targets[: self.max_boxes]
+
+    def target_names_match(self, expected_name, actual_name):
+        return self.normalize_target_name(expected_name) == self.normalize_target_name(actual_name)
+
+    def find_missing_expected_targets(self, entries, expected_targets):
+        if not expected_targets:
+            return []
+        unused = list(entries or [])
+        missing = []
+        for expected in expected_targets:
+            match_idx = None
+            for idx, entry in enumerate(unused):
+                if self.target_names_match(expected["name"], entry.get("target", "")):
+                    match_idx = idx
+                    break
+            if match_idx is None:
+                missing.append(expected)
+            else:
+                unused.pop(match_idx)
+        return missing
+
+    def query_vlm(self, command, image_bgr, expected_targets=None, attempt_idx=0, missing_targets=None):
+        expected_targets = expected_targets or []
+        missing_targets = missing_targets or []
+        expected_text = "\n".join(
+            [
+                f"- name={item['name']}, user_phrase={item.get('phrase', item['name'])}"
+                for item in expected_targets
+            ]
+        )
+        retry_hint = ""
+        if missing_targets:
+            retry_hint = (
+                "\n上一轮漏掉了这些目标，必须重新检查并补全："
+                + "、".join([item["name"] for item in missing_targets])
+                + "\n"
+            )
         prompt = (
             "你是货架商品拣选机器人的视觉助手。\n"
             f"用户任务：{command}\n"
+            + (f"任务中解析出的必需目标如下，输出 name 必须与这里完全一致：\n{expected_text}\n" if expected_targets else "")
+            + retry_hint +
             "请先理解任务中提到的每一种商品以及数量，再在当前货架图像中找到对应实例。\n"
             "输出严格 JSON，优先使用这个格式：\n"
             '{"targets":[{"name":"商品名","bbox":[xmin,ymin,xmax,ymax]}],"confidence":0.0}\n'
             "要求：\n"
-            "1. targets 中每一项只对应一个具体实例；\n"
-            "2. 如果用户要一个可乐和一个啤酒，就应输出两项，而不是把它们合并；\n"
+            "1. targets 中每一项只对应一个具体实例；如果必需目标有 3 个，就尽量输出 3 项；\n"
+            "2. 不要把多个商品合并，也不要用白砂糖/糖盒代替可乐、不要用可乐代替啤酒；\n"
             "3. bbox 按图像绝对像素坐标输出；\n"
-            "4. 如果找不到，对应商品就不要编造 bbox；\n"
-            "5. confidence 取 0 到 1；\n"
-            "6. 只返回 JSON，不要解释。"
+            "4. 如果用户说最右边/最左边，应在同类商品中按图像 x 方向选择对应实例；\n"
+            "5. 如果找不到，对应商品就不要编造 bbox；\n"
+            "6. confidence 取 0 到 1；\n"
+            "7. 只返回 JSON，不要解释。"
         )
 
         ok, buffer = cv2.imencode(".jpg", image_bgr)
@@ -204,6 +328,7 @@ class GlobalVLMTargetNode:
                     }
                 ],
                 temperature=0.0,
+                timeout=self.vlm_timeout_sec,
             )
         except Exception as exc:
             rospy.logerr("Global VLM request failed: %s", exc)

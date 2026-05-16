@@ -8,14 +8,15 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /usr/bin/python3)" />
-  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
+  <arg name="anygrasp_python" default="/home/lhj/anaconda3/envs/anygrasp_env/bin/python" />
+  <arg name="anygrasp_ld_preload" default="" />
   <arg name="launch_demo" default="false" />
   <arg name="launch_scheduler" default="false" />
   <arg name="launch_wrist_vlm" default="true" />
   <arg name="launch_wrist_grasp_refiner" default="false" />
   <arg name="launch_global_vlm" default="false" />
   <arg name="launch_semantic_reranker" default="false" />
+  <arg name="launch_ik_filter" default="false" />
   <arg name="launch_experiment_logger" default="false" />
   <arg name="scene_label" default="unknown" />
   <arg name="experiment_notes" default="" />
@@ -24,7 +25,7 @@
   <arg name="basket_y" default="-0.315779" />
   <arg name="basket_z" default="0.140719" />
   <arg name="use_basket_slot_grid" default="false" />
-  <arg name="use_fixed_shelf_collision" default="true" />
+  <arg name="use_fixed_shelf_collision" default="false" />
   <arg name="force_shelf_normal_approach" default="true" />
   <arg name="simple_front_grasp_mode" default="true" />
   <arg name="simple_front_insert_extra_depth" default="0.010" />
@@ -52,7 +53,7 @@
   <arg name="object_depth_gate_band" default="0.06" />
   <arg name="object_component_min_pixels" default="30" />
   <arg name="publish_background_collision_cloud" default="false" />
-  <arg name="publish_local_obstacle_cloud" default="true" />
+  <arg name="publish_local_obstacle_cloud" default="false" />
   <arg name="local_obstacle_max_points" default="6000" />
   <arg name="shelf_inner_margin_x" default="0.03" />
   <arg name="shelf_inner_margin_y" default="0.03" />
@@ -70,6 +71,10 @@
   <arg name="width_preference_weight" default="0.35" />
   <arg name="shelf_clearance_weight" default="0.45" />
   <arg name="neighbor_clearance_weight" default="0.35" />
+  <arg name="height_center_penalty_weight" default="1.00" />
+  <arg name="enforce_grasp_height_band" default="true" />
+  <arg name="min_grasp_height_fraction" default="0.30" />
+  <arg name="max_grasp_height_fraction" default="0.85" />
   <arg name="preferred_shelf_clearance" default="0.04" />
   <arg name="preferred_neighbor_clearance" default="0.05" />
   <arg name="min_shelf_forward_alignment" default="0.25" />
@@ -112,8 +117,16 @@
   <arg name="wrist_min_insert_fraction" default="0.60" />
   <arg name="use_iterative_wrist_alignment" default="false" />
   <arg name="wrist_alignment_max_iters" default="1" />
-  <arg name="use_final_wrist_alignment" default="false" />
-  <arg name="wrist_alignment_allow_vertical" default="false" />
+  <arg name="use_final_wrist_alignment" default="true" />
+  <arg name="wrist_alignment_allow_vertical" default="true" />
+  <arg name="wrist_alignment_use_camera_plane_tf" default="true" />
+  <arg name="final_preinsert_world_z_lift" default="0.0005" />
+  <arg name="wrist_vlm_timeout_sec" default="4.0" />
+  <arg name="wrist_vlm_max_retries" default="0" />
+  <arg name="wrist_vlm_max_image_side" default="480" />
+  <arg name="wrist_vlm_jpeg_quality" default="70" />
+  <arg name="require_wrist_alignment" default="false" />
+  <arg name="wrist_alignment_before_pregrasp" default="true" />
   <arg name="use_wrist_guided_insert_distance" default="true" />
   <arg name="wrist_extra_insert_max" default="0.05" />
   <arg name="wrist_insert_allow_shorten" default="false" />
@@ -170,6 +183,9 @@
   <arg name="plan_execution_start_tolerance" default="0.01" />
   <arg name="place_fallback_velocity_scaling" default="0.18" />
   <arg name="place_fallback_acceleration_scaling" default="0.12" />
+  <arg name="cartesian_retime" default="true" />
+  <arg name="cartesian_velocity_scaling" default="0.12" />
+  <arg name="cartesian_acceleration_scaling" default="0.08" />
   <arg name="simple_place_drop" default="true" />
   <arg name="fast_drop_when_inside_basket" default="true" />
   <arg name="fast_drop_inner_margin_xy" default="0.015" />
@@ -222,11 +238,23 @@
   <arg name="scheduler_ik_seed_trials" default="3" />
   <arg name="scheduler_ik_timeout_sec" default="0.35" />
   <arg name="semantic_fallback_timeout_min" default="12.0" />
-  <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY)" />
-  <arg name="vlm_model" default="$(optenv VLM_MODEL qwen-vl-max)" />
-  <arg name="vlm_base_url" default="$(optenv DASHSCOPE_BASE_URL https://dashscope.aliyuncs.com/compatible-mode/v1)" />
+  <arg name="vlm_api_key" default="" />
+  <arg name="vlm_model" default="qwen-vl-max" />
+  <arg name="vlm_base_url" default="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+  <arg name="global_vlm_timeout_sec" default="8.0" />
+  <arg name="global_vlm_max_retries" default="1" />
+  <arg name="global_vlm_allow_partial_targets" default="false" />
   <arg name="semantic_vlm_timeout_sec" default="10.0" />
+  <arg name="semantic_vlm_max_retries" default="0" />
   <arg name="semantic_vlm_parallel_workers" default="2" />
+  <arg name="semantic_skip_vlm_for_single_object" default="true" />
+  <arg name="semantic_max_candidates_per_object" default="3" />
+  <arg name="semantic_overview_candidates_per_object" default="15" />
+  <arg name="semantic_output_candidates_per_object" default="6" />
+  <arg name="ik_filter_timeout_sec" default="0.12" />
+  <arg name="ik_filter_max_feasible_per_object" default="6" />
+  <arg name="ik_filter_max_ik_checks_per_object" default="10" />
+  <arg name="execution_ik_max_observation_attempts" default="8" />
   <arg name="observation_ik_avoid_collisions" default="true" />
   <arg name="enable_goal_state_validity_check" default="true" />
   <arg name="observation_ik_seed_trials" default="3" />
@@ -268,6 +296,10 @@
     <param name="width_preference_weight" value="$(arg width_preference_weight)" />
     <param name="shelf_clearance_weight" value="$(arg shelf_clearance_weight)" />
     <param name="neighbor_clearance_weight" value="$(arg neighbor_clearance_weight)" />
+    <param name="height_center_penalty_weight" value="$(arg height_center_penalty_weight)" />
+    <param name="enforce_grasp_height_band" value="$(arg enforce_grasp_height_band)" />
+    <param name="min_grasp_height_fraction" value="$(arg min_grasp_height_fraction)" />
+    <param name="max_grasp_height_fraction" value="$(arg max_grasp_height_fraction)" />
     <param name="preferred_shelf_clearance" value="$(arg preferred_shelf_clearance)" />
     <param name="preferred_neighbor_clearance" value="$(arg preferred_neighbor_clearance)" />
     <param name="min_shelf_forward_alignment" value="$(arg min_shelf_forward_alignment)" />
@@ -304,6 +336,10 @@
     <param name="center_penalty_weight" value="$(arg center_penalty_weight)" />
     <param name="front_alignment_weight" value="$(arg front_alignment_weight)" />
     <param name="width_preference_weight" value="$(arg width_preference_weight)" />
+    <param name="height_center_penalty_weight" value="$(arg height_center_penalty_weight)" />
+    <param name="enforce_grasp_height_band" value="$(arg enforce_grasp_height_band)" />
+    <param name="min_grasp_height_fraction" value="$(arg min_grasp_height_fraction)" />
+    <param name="max_grasp_height_fraction" value="$(arg max_grasp_height_fraction)" />
     <param name="enable_box_fallback_grasp" value="$(arg enable_box_fallback_grasp)" />
     <param name="enable_width_filter" value="$(arg enable_width_filter)" />
     <param name="gripper_width_max" value="$(arg gripper_width_max)" />
@@ -411,6 +447,11 @@
         <param name="wrist_alignment_max_iters" value="$(arg wrist_alignment_max_iters)" />
         <param name="use_final_wrist_alignment" value="$(arg use_final_wrist_alignment)" />
         <param name="wrist_alignment_allow_vertical" value="$(arg wrist_alignment_allow_vertical)" />
+        <param name="wrist_alignment_use_camera_plane_tf" value="$(arg wrist_alignment_use_camera_plane_tf)" />
+        <param name="final_preinsert_world_z_lift" value="$(arg final_preinsert_world_z_lift)" />
+        <param name="wrist_vlm_timeout_sec" value="$(arg wrist_vlm_timeout_sec)" />
+        <param name="require_wrist_alignment" value="$(arg require_wrist_alignment)" />
+        <param name="wrist_alignment_before_pregrasp" value="$(arg wrist_alignment_before_pregrasp)" />
         <param name="use_wrist_guided_insert_distance" value="$(arg use_wrist_guided_insert_distance)" />
         <param name="wrist_extra_insert_max" value="$(arg wrist_extra_insert_max)" />
         <param name="wrist_insert_allow_shorten" value="$(arg wrist_insert_allow_shorten)" />
@@ -467,6 +508,9 @@
         <param name="plan_execution_start_tolerance" value="$(arg plan_execution_start_tolerance)" />
         <param name="place_fallback_velocity_scaling" value="$(arg place_fallback_velocity_scaling)" />
         <param name="place_fallback_acceleration_scaling" value="$(arg place_fallback_acceleration_scaling)" />
+        <param name="cartesian_retime" value="$(arg cartesian_retime)" />
+        <param name="cartesian_velocity_scaling" value="$(arg cartesian_velocity_scaling)" />
+        <param name="cartesian_acceleration_scaling" value="$(arg cartesian_acceleration_scaling)" />
         <param name="simple_place_drop" value="$(arg simple_place_drop)" />
         <param name="fast_drop_when_inside_basket" value="$(arg fast_drop_when_inside_basket)" />
         <param name="fast_drop_inner_margin_xy" value="$(arg fast_drop_inner_margin_xy)" />
@@ -522,7 +566,18 @@
     <param name="allow_unreachable_candidate_dispatch" value="$(arg allow_unreachable_candidate_dispatch)" />
     <param name="ik_seed_trials" value="$(arg scheduler_ik_seed_trials)" />
     <param name="ik_timeout_sec" value="$(arg scheduler_ik_timeout_sec)" />
+    <param name="max_observation_ik_attempts_per_candidate" value="$(arg execution_ik_max_observation_attempts)" />
     <param name="semantic_fallback_timeout_min" value="$(arg semantic_fallback_timeout_min)" />
+    <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
+    <param name="shelf_pose_fallback_yaw" value="$(arg shelf_pose_fallback_yaw)" />
+    <rosparam param="pre_grasp_back_distance_candidates" subst_value="True">$(arg pre_grasp_back_distance_candidates)</rosparam>
+    <param name="wrist_observation_backoff" value="$(arg wrist_observation_backoff)" />
+    <rosparam param="observation_lift_candidates" subst_value="True">$(arg observation_lift_candidates)</rosparam>
+    <rosparam param="grasp_roll_variants" subst_value="True">$(arg grasp_roll_variants)</rosparam>
+    <param name="grasp_pose_approach_axis" value="$(arg grasp_pose_approach_axis)" />
+    <param name="grasp_pose_open_axis" value="$(arg grasp_pose_open_axis)" />
+    <param name="enforce_horizontal_gripper_open_axis" value="$(arg enforce_horizontal_gripper_open_axis)" />
+    <param name="max_gripper_open_axis_vertical_component" value="$(arg max_gripper_open_axis_vertical_component)" />
   </node>
 
   <node pkg="sam_perception" type="wrist_vlm_node.py" name="wrist_vlm_node" output="screen"
@@ -531,6 +586,12 @@
     <param name="api_key" value="$(arg vlm_api_key)" />
     <param name="model" value="$(arg vlm_model)" />
     <param name="base_url" value="$(arg vlm_base_url)" />
+    <param name="vlm_timeout_sec" value="$(arg wrist_vlm_timeout_sec)" />
+    <param name="vlm_max_retries" value="$(arg wrist_vlm_max_retries)" />
+    <param name="max_image_side" value="$(arg wrist_vlm_max_image_side)" />
+    <param name="jpeg_quality" value="$(arg wrist_vlm_jpeg_quality)" />
+    <env name="DASHSCOPE_API_KEY" value="$(arg vlm_api_key)" />
+    <env name="OPENAI_API_KEY" value="$(arg vlm_api_key)" />
   </node>
 
   <node pkg="sam_perception" type="global_vlm_target_node.py" name="global_vlm_target_node" output="screen"
@@ -539,6 +600,35 @@
     <param name="api_key" value="$(arg vlm_api_key)" />
     <param name="model" value="$(arg vlm_model)" />
     <param name="base_url" value="$(arg vlm_base_url)" />
+    <param name="vlm_timeout_sec" value="$(arg global_vlm_timeout_sec)" />
+    <param name="vlm_max_retries" value="$(arg global_vlm_max_retries)" />
+    <param name="allow_partial_targets" value="$(arg global_vlm_allow_partial_targets)" />
+  </node>
+
+  <!-- IK filter: GraspNet raw 候选 → IK 可达性过滤 → semantic reranker -->
+  <node pkg="sam_perception" type="ik_filter.py" name="ik_filter" output="screen"
+        if="$(arg launch_ik_filter)"
+        launch-prefix="/usr/bin/python3">
+    <param name="pose_topic_in" value="/graspnet/grasp_pose_array_raw" />
+    <param name="info_topic_in" value="/graspnet/grasp_info_raw" />
+    <param name="pose_topic_out" value="/graspnet/grasp_pose_array_ik" />
+    <param name="info_topic_out" value="/graspnet/grasp_info_ik" />
+    <param name="ik_timeout" value="$(arg ik_filter_timeout_sec)" />
+    <param name="min_feasible_per_object" value="1" />
+    <param name="max_feasible_per_object" value="$(arg ik_filter_max_feasible_per_object)" />
+    <param name="max_ik_checks_per_object" value="$(arg ik_filter_max_ik_checks_per_object)" />
+    <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
+    <param name="max_observation_ik_attempts_per_candidate" value="$(arg execution_ik_max_observation_attempts)" />
+    <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
+    <param name="shelf_pose_fallback_yaw" value="$(arg shelf_pose_fallback_yaw)" />
+    <rosparam param="pre_grasp_back_distance_candidates" subst_value="True">$(arg pre_grasp_back_distance_candidates)</rosparam>
+    <param name="wrist_observation_backoff" value="$(arg wrist_observation_backoff)" />
+    <rosparam param="observation_lift_candidates" subst_value="True">$(arg observation_lift_candidates)</rosparam>
+    <rosparam param="grasp_roll_variants" subst_value="True">$(arg grasp_roll_variants)</rosparam>
+    <param name="grasp_pose_approach_axis" value="$(arg grasp_pose_approach_axis)" />
+    <param name="grasp_pose_open_axis" value="$(arg grasp_pose_open_axis)" />
+    <param name="enforce_horizontal_gripper_open_axis" value="$(arg enforce_horizontal_gripper_open_axis)" />
+    <param name="max_gripper_open_axis_vertical_component" value="$(arg max_gripper_open_axis_vertical_component)" />
   </node>
 
   <node pkg="sam_perception" type="semantic_reranker.py" name="semantic_reranker" output="screen"
@@ -547,11 +637,18 @@
     <param name="api_key" value="$(arg vlm_api_key)" />
     <param name="model" value="$(arg vlm_model)" />
     <param name="base_url" value="$(arg vlm_base_url)" />
+    <param name="pose_topic" value="/graspnet/grasp_pose_array_ik" />
+    <param name="info_topic" value="/graspnet/grasp_info_ik" />
     <param name="strict_width_filter" value="$(arg strict_width_filter)" />
     <param name="gripper_width_max" value="$(arg gripper_width_max)" />
     <param name="gripper_width_margin" value="$(arg gripper_width_margin)" />
     <param name="vlm_timeout_sec" value="$(arg semantic_vlm_timeout_sec)" />
+    <param name="vlm_max_retries" value="$(arg semantic_vlm_max_retries)" />
     <param name="vlm_parallel_workers" value="$(arg semantic_vlm_parallel_workers)" />
+    <param name="skip_vlm_for_single_object" value="$(arg semantic_skip_vlm_for_single_object)" />
+    <param name="max_candidates_per_object" value="$(arg semantic_max_candidates_per_object)" />
+    <param name="overview_candidates_per_object" value="$(arg semantic_overview_candidates_per_object)" />
+    <param name="max_output_candidates_per_object" value="$(arg semantic_output_candidates_per_object)" />
     <param name="center_offset_weight" value="$(arg semantic_center_offset_weight)" />
     <param name="target_image_topic" value="/vlm/global_target_image" />
   </node>
