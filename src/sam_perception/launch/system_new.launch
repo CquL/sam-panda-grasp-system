@@ -8,7 +8,7 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
-  <arg name="anygrasp_python" default="/home/lhj/anaconda3/envs/anygrasp_env/bin/python" />
+  <arg name="anygrasp_python" default="python3" />
   <arg name="anygrasp_ld_preload" default="" />
   <arg name="launch_demo" default="false" />
   <arg name="launch_scheduler" default="false" />
