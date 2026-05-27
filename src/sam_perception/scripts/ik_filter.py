@@ -65,6 +65,7 @@ class IKFilterNode:
             int(rospy.get_param("~max_feasible_per_object", 6)),
         )
         self.max_ik_checks_per_object = int(rospy.get_param("~max_ik_checks_per_object", 10))
+        self.assume_all_reachable = bool(rospy.get_param("~assume_all_reachable", False))
         self.publish_stats = bool(rospy.get_param("~publish_stats", True))
 
         # --- 同步接收 ---
@@ -79,7 +80,7 @@ class IKFilterNode:
         self.pub_info = rospy.Publisher(self.info_topic_out, Float32MultiArray, queue_size=1)
 
         rospy.loginfo(
-            "🔧 IK filter: %s/%s → %s/%s (execution-style observation IK, ik_timeout=%.2fs, max_feasible/object=%d, max_checks/object=%d)",
+            "🔧 IK filter: %s/%s → %s/%s (execution-style observation IK, ik_timeout=%.2fs, max_feasible/object=%d, max_checks/object=%d, assume_all_reachable=%s)",
             self.pose_topic_in,
             self.info_topic_in,
             self.pose_topic_out,
@@ -87,6 +88,7 @@ class IKFilterNode:
             self.ik_timeout,
             self.max_feasible_per_object,
             self.max_ik_checks_per_object,
+            str(self.assume_all_reachable).lower(),
         )
 
     def pose_cb(self, msg):
@@ -163,6 +165,37 @@ class IKFilterNode:
         )
         if num_poses == 0 or info_stride < 4:
             return pose_msg, info_data
+
+        if self.assume_all_reachable:
+            kept_indices = []
+            per_object_counts = {}
+            for idx in range(num_poses):
+                base = idx * info_stride
+                obj_id = int(info_data[base])
+                count = per_object_counts.get(obj_id, 0)
+                if count >= self.max_feasible_per_object:
+                    continue
+                per_object_counts[obj_id] = count + 1
+                kept_indices.append(idx)
+
+            out_pose = PoseArray()
+            out_pose.header = pose_msg.header
+            out_info = []
+            for idx in kept_indices:
+                out_pose.poses.append(pose_msg.poses[idx])
+                base = idx * info_stride
+                obj_id = int(info_data[base])
+                width = float(info_data[base + 1])
+                score = float(info_data[base + 2])
+                depth = float(info_data[base + 3])
+                out_info.extend([obj_id, width, score, depth, 1.0])
+            rospy.loginfo(
+                "🔧 IK filter 宽松透传: %d → %d 候选全部标记为可达，跳过 /compute_ik (max/object=%d)。",
+                num_poses,
+                len(kept_indices),
+                self.max_feasible_per_object,
+            )
+            return out_pose, out_info
 
         # 解析每个候选
         object_ids = [int(info_data[i * info_stride]) for i in range(num_poses)]

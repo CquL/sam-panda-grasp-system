@@ -8,8 +8,8 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
-  <arg name="anygrasp_python" default="python3" />
-  <arg name="anygrasp_ld_preload" default="" />
+  <arg name="anygrasp_python" default="/home/lhj/anaconda3/envs/anygrasp_env/bin/python" />
+  <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
   <arg name="launch_demo" default="false" />
   <arg name="launch_scheduler" default="false" />
   <arg name="launch_wrist_vlm" default="true" />
@@ -45,6 +45,7 @@
   <arg name="figure_output_dir" default="$(env HOME)/grasp_robot_ws/thesis_figures" />
   <arg name="save_thesis_figures" default="false" />
   <arg name="save_task_keyframes" default="false" />
+  <arg name="show_grasp_debug" default="false" />
   <arg name="visualize_grasp_on_depth" default="false" />
   <arg name="visualize_grasp_o3d" default="false" />
   <arg name="top_k_per_object" default="15" />
@@ -90,6 +91,7 @@
   <arg name="observation_planning_attempts" default="1" />
   <arg name="observation_lift_candidates" default="[0.00, 0.04]" />
   <arg name="max_observation_search_time" default="35.0" />
+  <arg name="allow_relaxed_observation_orientation" default="true" />
   <arg name="joint_limit_margin" default="0.003" />
   <arg name="wrist_observation_backoff" default="0.04" />
   <arg name="wrist_depth_band" default="0.05" />
@@ -181,6 +183,8 @@
   <arg name="place_ik_timeout_sec" default="0.35" />
   <arg name="place_ik_seed_trials" default="3" />
   <arg name="plan_execution_start_tolerance" default="0.01" />
+  <arg name="global_velocity_scaling" default="0.30" />
+  <arg name="global_acceleration_scaling" default="0.25" />
   <arg name="place_fallback_velocity_scaling" default="0.18" />
   <arg name="place_fallback_acceleration_scaling" default="0.12" />
   <arg name="cartesian_retime" default="true" />
@@ -251,10 +255,11 @@
   <arg name="semantic_max_candidates_per_object" default="3" />
   <arg name="semantic_overview_candidates_per_object" default="15" />
   <arg name="semantic_output_candidates_per_object" default="6" />
-  <arg name="ik_filter_timeout_sec" default="0.12" />
-  <arg name="ik_filter_max_feasible_per_object" default="6" />
-  <arg name="ik_filter_max_ik_checks_per_object" default="10" />
-  <arg name="execution_ik_max_observation_attempts" default="8" />
+  <arg name="ik_filter_timeout_sec" default="0.30" />
+  <arg name="ik_filter_max_feasible_per_object" default="15" />
+  <arg name="ik_filter_max_ik_checks_per_object" default="0" />
+  <arg name="execution_ik_max_observation_attempts" default="0" />
+  <arg name="ik_filter_assume_all_reachable" default="false" />
   <arg name="observation_ik_avoid_collisions" default="true" />
   <arg name="enable_goal_state_validity_check" default="true" />
   <arg name="observation_ik_seed_trials" default="3" />
@@ -408,12 +413,14 @@
         <param name="shelf_pose_fallback_yaw" value="$(arg shelf_pose_fallback_yaw)" />
         <param name="figure_output_dir" value="$(arg figure_output_dir)" />
         <param name="save_task_keyframes" value="$(arg save_task_keyframes)" />
+        <param name="show_grasp_debug" value="$(arg show_grasp_debug)" />
         <param name="pre_grasp_back_distance" value="$(arg pre_grasp_back_distance)" />
         <rosparam param="pre_grasp_back_distance_candidates" subst_value="True">$(arg pre_grasp_back_distance_candidates)</rosparam>
         <param name="observation_planning_time" value="$(arg observation_planning_time)" />
         <param name="observation_planning_attempts" value="$(arg observation_planning_attempts)" />
         <rosparam param="observation_lift_candidates" subst_value="True">$(arg observation_lift_candidates)</rosparam>
         <param name="max_observation_search_time" value="$(arg max_observation_search_time)" />
+        <param name="allow_relaxed_observation_orientation" value="$(arg allow_relaxed_observation_orientation)" />
         <param name="observation_ik_avoid_collisions" value="$(arg observation_ik_avoid_collisions)" />
         <param name="enable_goal_state_validity_check" value="$(arg enable_goal_state_validity_check)" />
         <param name="observation_ik_seed_trials" value="$(arg observation_ik_seed_trials)" />
@@ -506,6 +513,8 @@
         <param name="place_ik_timeout_sec" value="$(arg place_ik_timeout_sec)" />
         <param name="place_ik_seed_trials" value="$(arg place_ik_seed_trials)" />
         <param name="plan_execution_start_tolerance" value="$(arg plan_execution_start_tolerance)" />
+        <param name="global_velocity_scaling" value="$(arg global_velocity_scaling)" />
+        <param name="global_acceleration_scaling" value="$(arg global_acceleration_scaling)" />
         <param name="place_fallback_velocity_scaling" value="$(arg place_fallback_velocity_scaling)" />
         <param name="place_fallback_acceleration_scaling" value="$(arg place_fallback_acceleration_scaling)" />
         <param name="cartesian_retime" value="$(arg cartesian_retime)" />
@@ -617,6 +626,7 @@
     <param name="min_feasible_per_object" value="1" />
     <param name="max_feasible_per_object" value="$(arg ik_filter_max_feasible_per_object)" />
     <param name="max_ik_checks_per_object" value="$(arg ik_filter_max_ik_checks_per_object)" />
+    <param name="assume_all_reachable" value="$(arg ik_filter_assume_all_reachable)" />
     <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
     <param name="max_observation_ik_attempts_per_candidate" value="$(arg execution_ik_max_observation_attempts)" />
     <param name="force_shelf_normal_approach" value="$(arg force_shelf_normal_approach)" />
@@ -651,6 +661,11 @@
     <param name="max_output_candidates_per_object" value="$(arg semantic_output_candidates_per_object)" />
     <param name="center_offset_weight" value="$(arg semantic_center_offset_weight)" />
     <param name="target_image_topic" value="/vlm/global_target_image" />
+    <param name="visualize_candidate_crop" value="false" />
+    <param name="save_candidate_crop" value="false" />
+    <param name="save_candidate_json" value="false" />
+    <param name="visualize_global_overview" value="false" />
+    <param name="save_global_overview" value="false" />
   </node>
 
 

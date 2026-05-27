@@ -40,7 +40,9 @@ class GlobalVLMTargetNode:
             "~base_url",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
+        api_key_param = str(rospy.get_param("~api_key", "")).strip()
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key_param or env_api_key or DEFAULT_API_KEY
         self.max_boxes = max(1, int(rospy.get_param("~max_boxes", 4)))
         self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 20.0))
         self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 2)))
@@ -215,9 +217,12 @@ class GlobalVLMTargetNode:
         text = str(text or "").strip().lower()
         alias_groups = [
             ("白砂糖", ["白砂糖", "砂糖", "糖", "sugar"]),
+            ("黄色盒子", ["黄色盒子", "黄盒子", "yellow box"]),
+            ("红色盒子", ["红色盒子", "红盒子", "red box"]),
             ("可乐", ["可乐", "coke", "cola", "coca"]),
             ("啤酒", ["啤酒", "beer"]),
             ("番茄罐头", ["番茄罐头", "番茄", "tomato"]),
+            ("盒子", ["盒子", "box"]),
         ]
         for canonical, aliases in alias_groups:
             if any(alias in text for alias in aliases):
@@ -234,6 +239,71 @@ class GlobalVLMTargetNode:
             cleaned = re.sub(pattern, "", cleaned)
         return cleaned.strip() or str(text).strip()
 
+    def part_mentions_known_target(self, text):
+        lowered = str(text or "").lower()
+        tokens = [
+            "可乐",
+            "啤酒",
+            "白砂糖",
+            "砂糖",
+            "糖",
+            "番茄",
+            "盒子",
+            "黄盒",
+            "红盒",
+            "黄色",
+            "红色",
+            "coke",
+            "cola",
+            "beer",
+            "sugar",
+            "tomato",
+            "box",
+        ]
+        return any(token in lowered for token in tokens)
+
+    def target_count_from_phrase(self, phrase):
+        text = str(phrase or "").lower()
+        if re.search(r"(两个|两罐|两瓶|两盒|2\s*个|2\s*罐|2\s*瓶|2\s*盒|二个|二罐|二瓶|二盒)", text):
+            return 2
+        if re.search(r"(三个|三罐|三瓶|三盒|3\s*个|3\s*罐|3\s*瓶|3\s*盒)", text):
+            return 3
+        return 1
+
+    def extract_generic_layer_targets(self, part):
+        text = str(part or "").strip()
+        match = re.search(
+            r"(第?\s*[一二三四五六七八九十123456789]\s*层|上层|中层|下层)[^、，,;；]{0,16}?"
+            r"([一二三四五六七八九十123456789]+)\s*个\s*(物体|目标|商品|东西)",
+            text,
+        )
+        if not match:
+            return []
+        layer = re.sub(r"\s+", "", match.group(1))
+        count_text = match.group(2)
+        zh_nums = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        try:
+            count = int(count_text)
+        except Exception:
+            count = zh_nums.get(count_text, 1)
+        count = max(1, min(int(count), self.max_boxes))
+        return [
+            {"name": f"{layer}物体", "phrase": f"{layer}第{idx + 1}个物体"}
+            for idx in range(count)
+        ]
+
     def extract_expected_targets(self, command):
         text = str(command or "").strip()
         if not text:
@@ -241,18 +311,30 @@ class GlobalVLMTargetNode:
         normalized = text.replace("，", "、").replace(",", "、").replace("和", "、").replace("及", "、")
         parts = [p.strip() for p in re.split(r"[、;；]+", normalized) if p.strip()]
         targets = []
-        seen = set()
         for part in parts:
-            if not any(token in part.lower() for token in ["可乐", "啤酒", "白砂糖", "砂糖", "糖", "番茄", "coke", "cola", "beer", "sugar", "tomato"]):
+            generic_targets = self.extract_generic_layer_targets(part)
+            if generic_targets:
+                for item in generic_targets:
+                    targets.append(item)
+                    if len(targets) >= self.max_boxes:
+                        return targets
+                continue
+            if not self.part_mentions_known_target(part):
                 continue
             name = self.normalize_target_name(part)
-            if not name or name in seen:
+            if not name:
                 continue
-            seen.add(name)
-            targets.append({"name": name, "phrase": part})
+            count = max(1, self.target_count_from_phrase(part))
+            for idx in range(count):
+                phrase = part if count == 1 else f"{part} (第{idx + 1}个)"
+                targets.append({"name": name, "phrase": phrase})
+                if len(targets) >= self.max_boxes:
+                    return targets
         return targets[: self.max_boxes]
 
     def target_names_match(self, expected_name, actual_name):
+        if "物体" in str(expected_name or ""):
+            return bool(str(actual_name or "").strip())
         return self.normalize_target_name(expected_name) == self.normalize_target_name(actual_name)
 
     def find_missing_expected_targets(self, entries, expected_targets):
@@ -393,6 +475,33 @@ class GlobalVLMTargetNode:
             normalized = self.normalize_parsed_payload(parsed)
             if normalized is not None:
                 return normalized
+
+        # 4) Some cheaper VLMs occasionally return almost-JSON such as
+        # {"name":"可乐","bbox":[247,59,298,176"}. Recover the useful fields.
+        recovered = self.recover_targets_from_loose_text(text)
+        if recovered is not None:
+            return recovered
+        return None
+
+    def recover_targets_from_loose_text(self, text):
+        targets = []
+        pattern = re.compile(
+            r'"name"\s*:\s*"([^"]+)"[\s\S]{0,240}?"bbox"\s*:\s*\[([^\]\}]+)',
+            flags=re.IGNORECASE,
+        )
+        for match in pattern.finditer(text):
+            name = match.group(1).strip()
+            nums = re.findall(r"-?\d+(?:\.\d+)?", match.group(2))
+            if len(nums) < 4:
+                continue
+            try:
+                bbox = [float(v) for v in nums[:4]]
+            except Exception:
+                continue
+            targets.append({"name": name, "bbox": bbox})
+
+        if targets:
+            return {"targets": targets[: self.max_boxes], "confidence": 0.0}
         return None
 
     def normalize_parsed_payload(self, parsed):

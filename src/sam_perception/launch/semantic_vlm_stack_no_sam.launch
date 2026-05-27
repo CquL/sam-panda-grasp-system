@@ -10,7 +10,7 @@
   <!-- 单点配置 -->
   <arg name="scene_label" default="no_sam" />
   <arg name="experiment_notes" default="VLM+GraspNet (no SAM ablation)" />
-  <arg name="anygrasp_python" default="python3" />
+  <arg name="anygrasp_python" default="/home/lhj/anaconda3/envs/anygrasp_env/bin/python" />
 
   <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY)" />
   <arg name="vlm_model" default="qwen-vl-max" />

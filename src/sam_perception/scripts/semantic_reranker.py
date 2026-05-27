@@ -54,7 +54,9 @@ class SemanticRerankerNode:
             "~base_url",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
-        self.api_key = rospy.get_param("~api_key", os.environ.get("DASHSCOPE_API_KEY", DEFAULT_API_KEY))
+        api_key_param = str(rospy.get_param("~api_key", "")).strip()
+        env_api_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = api_key_param or env_api_key or DEFAULT_API_KEY
         self.vlm_timeout_sec = float(rospy.get_param("~vlm_timeout_sec", 10.0))
         self.vlm_max_retries = max(0, int(rospy.get_param("~vlm_max_retries", 1)))
         self.vlm_parallel_workers = max(1, int(rospy.get_param("~vlm_parallel_workers", 2)))
