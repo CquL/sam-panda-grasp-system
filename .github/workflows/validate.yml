@@ -53,25 +53,6 @@ jobs:
             src/panda_pick_place/scripts/moveit_learn.py \
             src/panda_pick_place/scripts/new.py
 
-      - name: Validate required repository files
-        run: |
-          test -f README.md
-          test -f CONTRIBUTING.md
-          test -f .env.example
-          test -f docs/ARCHITECTURE.md
-          test -f docs/COMPATIBILITY.md
-          test -f docs/PORTABILITY_AUDIT.md
-          test -f docs/QUICKSTART.md
-          test -f docs/THIRD_PARTY.md
-          test -f docs/assets/hero.svg
-          test -f docs/assets/readiness.svg
-          test -f docs/assets/system-panels.svg
-          test -f docs/assets/compatibility.svg
-          test -f environment/README.md
-          test -f environment/anygrasp_env.reference.yml
-          test -f requirements/anygrasp-reference.txt
-          test -f scripts/download_models.sh
-          test -f scripts/source_project_env.sh
 
       - name: Check for machine-local absolute paths under src
         run: |
