@@ -32,9 +32,17 @@ class ExperimentLogger:
         "psr_threshold",
         "psr",
         "joint_cost_rad",
+        "planned_joint_cost_rad",
         "scheduler_time_sec",
         "cluster_count",
         "candidate_pose_count",
+        "ga_population_size",
+        "ga_generations",
+        "ga_mutation_rate",
+        "ga_initial_best_cost_rad",
+        "ga_final_best_cost_rad",
+        "ga_improvement_ratio",
+        "ga_convergence_curve",
         "failure_stage",
         "failure_reason",
     ]
@@ -83,6 +91,29 @@ class ExperimentLogger:
             with open(self.output_file, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=self.FIELDNAMES)
                 writer.writeheader()
+            return
+
+        with open(self.output_file, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            existing_fields = reader.fieldnames or []
+            if all(field in existing_fields for field in self.FIELDNAMES):
+                return
+            rows = list(reader)
+
+        backup_file = self.output_file + ".bak"
+        try:
+            if not os.path.exists(backup_file):
+                os.replace(self.output_file, backup_file)
+            else:
+                os.replace(self.output_file, self.output_file + f".bak.{int(time.time())}")
+        except Exception as exc:
+            rospy.logwarn(f"⚠️ 备份旧实验 CSV 失败，继续尝试重写表头: {exc}")
+
+        with open(self.output_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=self.FIELDNAMES)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({field: row.get(field, "") for field in self.FIELDNAMES})
 
     def new_run(self):
         self.run_index += 1
@@ -102,9 +133,17 @@ class ExperimentLogger:
             "cartesian_success_count": 0,
             "cartesian_total_count": 0,
             "joint_cost_rad": "",
+            "planned_joint_cost_rad": "",
             "scheduler_time_sec": "",
             "cluster_count": "",
             "candidate_pose_count": "",
+            "ga_population_size": "",
+            "ga_generations": "",
+            "ga_mutation_rate": "",
+            "ga_initial_best_cost_rad": "",
+            "ga_final_best_cost_rad": "",
+            "ga_improvement_ratio": "",
+            "ga_convergence_curve": "",
             "failure_stage": "",
             "failure_reason": "",
         }
@@ -168,9 +207,20 @@ class ExperimentLogger:
 
         metrics = {
             "joint_cost_rad": payload.get("joint_cost_rad", ""),
+            "planned_joint_cost_rad": payload.get("planned_joint_cost_rad", ""),
             "scheduler_time_sec": payload.get("scheduler_time_sec", ""),
             "cluster_count": payload.get("cluster_count", ""),
             "candidate_pose_count": payload.get("candidate_pose_count", ""),
+            "ga_population_size": payload.get("ga_population_size", ""),
+            "ga_generations": payload.get("ga_generations", ""),
+            "ga_mutation_rate": payload.get("ga_mutation_rate", ""),
+            "ga_initial_best_cost_rad": payload.get("ga_initial_best_cost_rad", ""),
+            "ga_final_best_cost_rad": payload.get("ga_final_best_cost_rad", ""),
+            "ga_improvement_ratio": payload.get("ga_improvement_ratio", ""),
+            "ga_convergence_curve": json.dumps(
+                payload.get("ga_convergence_curve", []),
+                ensure_ascii=False,
+            ),
         }
 
         if self.current_run is None:
@@ -248,11 +298,29 @@ class ExperimentLogger:
             "joint_cost_rad": (
                 f"{float(run['joint_cost_rad']):.4f}" if run["joint_cost_rad"] != "" else ""
             ),
+            "planned_joint_cost_rad": (
+                f"{float(run['planned_joint_cost_rad']):.4f}" if run["planned_joint_cost_rad"] != "" else ""
+            ),
             "scheduler_time_sec": (
                 f"{float(run['scheduler_time_sec']):.4f}" if run["scheduler_time_sec"] != "" else ""
             ),
             "cluster_count": run["cluster_count"],
             "candidate_pose_count": run["candidate_pose_count"],
+            "ga_population_size": run["ga_population_size"],
+            "ga_generations": run["ga_generations"],
+            "ga_mutation_rate": (
+                f"{float(run['ga_mutation_rate']):.4f}" if run["ga_mutation_rate"] != "" else ""
+            ),
+            "ga_initial_best_cost_rad": (
+                f"{float(run['ga_initial_best_cost_rad']):.4f}" if run["ga_initial_best_cost_rad"] != "" else ""
+            ),
+            "ga_final_best_cost_rad": (
+                f"{float(run['ga_final_best_cost_rad']):.4f}" if run["ga_final_best_cost_rad"] != "" else ""
+            ),
+            "ga_improvement_ratio": (
+                f"{float(run['ga_improvement_ratio']):.4f}" if run["ga_improvement_ratio"] != "" else ""
+            ),
+            "ga_convergence_curve": run["ga_convergence_curve"],
             "failure_stage": run["failure_stage"],
             "failure_reason": run["failure_reason"],
         }

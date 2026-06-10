@@ -1,9 +1,16 @@
 <launch>
-  <!-- 单点配置：只启动这个 launch 时，在这里填一次即可 -->
+  <!-- ============================================================
+       随机顺序调度消融实验（GTSP 基线对比）
+       与 semantic_vlm_stack.launch 完全相同，唯一区别：
+         - 用 random_order_scheduler.py 替换 gtsp_scheduler.py
+         - scene_label 默认为 "random_order"
+       ============================================================ -->
+
+  <!-- ===== 参数：与 semantic_vlm_stack.launch 完全一致 ===== -->
   <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /home/lhj/anaconda3/envs/anygrasp_env/bin/python)" />
   <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
   <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY sk-a85a76a8ada94ef2886ecd43bf0f9e80)" />
-  <arg name="vlm_model" default="qwen-vl-plus" />
+  <arg name="vlm_model" default="qwen-vl-max-latest" />
   <arg name="vlm_base_url" default="https://dashscope.aliyuncs.com/compatible-mode/v1" />
   <arg name="global_vlm_timeout_sec" default="20.0" />
   <arg name="global_vlm_max_retries" default="2" />
@@ -16,15 +23,9 @@
   <arg name="semantic_overview_candidates_per_object" default="15" />
   <arg name="semantic_output_candidates_per_object" default="6" />
   <arg name="launch_semantic_reranker" default="true" />
-  <arg name="scheduler_pose_topic" default="/graspnet/grasp_pose_array_semantic" />
-  <arg name="scheduler_info_topic" default="/graspnet/grasp_info_semantic" />
-  <arg name="semantic_weight" default="0.35" />
-  <arg name="ga_population_size" default="50" />
-  <arg name="ga_generations" default="30" />
-  <arg name="ga_mutation_rate" default="0.20" />
   <arg name="launch_experiment_logger" default="false" />
-  <arg name="scene_label" default="unknown" />
-  <arg name="experiment_notes" default="" />
+  <arg name="scene_label" default="random_order" />
+  <arg name="experiment_notes" default="Random order baseline (no GTSP)" />
   <arg name="experiment_output_file" default="$(env HOME)/grasp_robot_ws/experiment_results/end_to_end_metrics.csv" />
   <arg name="ik_filter_timeout_sec" default="0.30" />
   <arg name="ik_filter_max_feasible_per_object" default="15" />
@@ -140,11 +141,12 @@
   <arg name="pointcloud_grasp_mesh_radius" default="0.0031" />
   <arg name="pointcloud_grasp_center_radius" default="0.0062" />
 
+  <!-- ===== 共享所有节点（与 semantic_vlm_stack 完全一致），但关闭 GTSP 调度器 ===== -->
   <include file="$(find sam_perception)/launch/system_new.launch">
     <arg name="anygrasp_python" value="$(arg anygrasp_python)" />
     <arg name="anygrasp_ld_preload" value="$(arg anygrasp_ld_preload)" />
     <arg name="launch_demo" value="true" />
-    <arg name="launch_scheduler" value="true" />
+    <arg name="launch_scheduler" value="false" />  <!-- 关键：关闭 GTSP 调度器 -->
     <arg name="launch_wrist_vlm" value="true" />
     <arg name="launch_wrist_grasp_refiner" value="$(arg launch_wrist_grasp_refiner)" />
     <arg name="launch_global_vlm" value="true" />
@@ -153,18 +155,18 @@
     <arg name="global_vlm_allow_partial_targets" value="$(arg global_vlm_allow_partial_targets)" />
     <arg name="launch_ik_filter" value="true" />
     <arg name="launch_semantic_reranker" value="$(arg launch_semantic_reranker)" />
-    <arg name="scheduler_pose_topic" value="$(arg scheduler_pose_topic)" />
-    <arg name="scheduler_info_topic" value="$(arg scheduler_info_topic)" />
+    <arg name="scheduler_pose_topic" value="/graspnet/grasp_pose_array_semantic" />
+    <arg name="scheduler_info_topic" value="/graspnet/grasp_info_semantic" />
     <arg name="enable_scheduler_fallback" value="false" />
     <arg name="fallback_timeout_sec" value="30.0" />
     <arg name="semantic_fallback_timeout_min" value="30.0" />
     <arg name="allow_unreachable_candidate_dispatch" value="false" />
-    <arg name="semantic_weight" value="$(arg semantic_weight)" />
+    <arg name="semantic_weight" value="0.35" />
     <arg name="reachability_weight" value="0.15" />
     <arg name="per_task_candidate_count" value="6" />
-    <arg name="ga_population_size" value="$(arg ga_population_size)" />
-    <arg name="ga_generations" value="$(arg ga_generations)" />
-    <arg name="ga_mutation_rate" value="$(arg ga_mutation_rate)" />
+    <arg name="ga_population_size" value="50" />
+    <arg name="ga_generations" value="30" />
+    <arg name="ga_mutation_rate" value="0.20" />
     <arg name="launch_experiment_logger" value="$(arg launch_experiment_logger)" />
     <arg name="scene_label" value="$(arg scene_label)" />
     <arg name="experiment_notes" value="$(arg experiment_notes)" />
@@ -286,34 +288,23 @@
     <arg name="vlm_base_url" value="$(arg vlm_base_url)" />
   </include>
 
-  <include file="$(find sam_perception)/launch/pointcloud_debug.launch"
-           if="$(arg launch_pointcloud_debug)">
-    <arg name="launch_rviz" value="false" />
-    <arg name="show_windows" value="$(arg pointcloud_show_windows)" />
-    <arg name="show_o3d_windows" value="$(arg pointcloud_show_o3d_windows)" />
-    <arg name="show_raw_o3d" value="$(arg pointcloud_show_raw_o3d)" />
-    <arg name="show_object_overview_o3d" value="$(arg pointcloud_show_object_overview_o3d)" />
-    <arg name="show_background_o3d" value="$(arg pointcloud_show_background_o3d)" />
-    <arg name="o3d_white_background" value="$(arg pointcloud_white_background)" />
-    <arg name="show_bounding_box" value="$(arg pointcloud_show_bbox)" />
-    <arg name="show_output_grasps" value="$(arg pointcloud_show_output_grasps)" />
-    <arg name="display_grasp_top_n" value="$(arg pointcloud_grasp_top_n)" />
-    <arg name="overview_grasp_top_n" value="$(arg pointcloud_overview_grasp_top_n)" />
-    <arg name="overview_use_rgb_texture" value="$(arg pointcloud_overview_use_rgb_texture)" />
-    <arg name="focus_object_id" value="$(arg pointcloud_focus_object_id)" />
-    <arg name="focus_selection_mode" value="$(arg pointcloud_focus_selection_mode)" />
-    <arg name="show_focus_object" value="$(arg pointcloud_show_focus_object)" />
-    <arg name="show_focus_pure_object" value="$(arg pointcloud_show_focus_pure_object)" />
-    <arg name="show_focus_overlay_object" value="$(arg pointcloud_show_focus_overlay_object)" />
-    <arg name="show_focus_pure_o3d" value="$(arg pointcloud_show_focus_pure_o3d)" />
-    <arg name="show_focus_overlay_o3d" value="$(arg pointcloud_show_focus_overlay_o3d)" />
-    <arg name="show_all_object_focus_windows" value="$(arg pointcloud_show_all_object_focus_windows)" />
-    <arg name="show_all_object_focus_pure_o3d" value="$(arg pointcloud_show_all_object_focus_pure_o3d)" />
-    <arg name="show_all_object_focus_overlay_o3d" value="$(arg pointcloud_show_all_object_focus_overlay_o3d)" />
-    <arg name="all_object_detail_max_windows" value="$(arg pointcloud_all_object_detail_max_windows)" />
-    <arg name="focus_use_rgb_texture" value="$(arg pointcloud_focus_use_rgb_texture)" />
-    <arg name="save_snapshots" value="$(arg pointcloud_save_snapshots)" />
-    <arg name="grasp_mesh_radius" value="$(arg pointcloud_grasp_mesh_radius)" />
-    <arg name="grasp_center_radius" value="$(arg pointcloud_grasp_center_radius)" />
+  <!-- ===== 关键：用随机调度器替换 GTSP 调度器 ===== -->
+  <!-- system_new.launch 里 launch_scheduler=false，GTSP 不会启动 -->
+  <node pkg="sam_perception" type="random_order_scheduler.py" name="random_order_scheduler" output="screen"
+      launch-prefix="/usr/bin/python3">
+    <param name="pose_topic" value="/graspnet/grasp_pose_array_semantic" />
+    <param name="info_topic" value="/graspnet/grasp_info_semantic" />
+    <param name="ik_timeout_sec" value="0.15" />
+    <param name="assume_all_reachable" value="$(arg ik_filter_assume_all_reachable)" />
+  </node>
+
+  <!-- ===== 数据记录：用 pipeline_variant 区分 ===== -->
+  <include file="$(find sam_perception)/launch/experiment_logger.launch"
+           if="$(arg launch_experiment_logger)">
+    <arg name="scene_label" value="$(arg scene_label)" />
+    <arg name="pipeline_variant" value="vlm_sam_graspnet_random" />
+    <arg name="notes" value="$(arg experiment_notes)" />
+    <arg name="output_file" value="$(arg experiment_output_file)" />
   </include>
+
 </launch>

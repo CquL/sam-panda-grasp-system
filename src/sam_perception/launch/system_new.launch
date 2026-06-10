@@ -8,7 +8,7 @@
        panda_manipulator[ABITstar]
     -->
   <arg name="planner_id" default="panda_manipulator[RRTConnect]" />
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON python3)" />
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /home/lhj/anaconda3/envs/anygrasp_env/bin/python)" />
   <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
   <arg name="launch_demo" default="false" />
   <arg name="launch_scheduler" default="false" />
@@ -238,6 +238,9 @@
   <arg name="semantic_weight" default="0.0" />
   <arg name="reachability_weight" default="0.15" />
   <arg name="per_task_candidate_count" default="4" />
+  <arg name="ga_population_size" default="50" />
+  <arg name="ga_generations" default="30" />
+  <arg name="ga_mutation_rate" default="0.20" />
   <arg name="allow_unreachable_candidate_dispatch" default="true" />
   <arg name="scheduler_ik_seed_trials" default="3" />
   <arg name="scheduler_ik_timeout_sec" default="0.35" />
@@ -572,6 +575,9 @@
     <param name="semantic_weight" value="$(arg semantic_weight)" />
     <param name="reachability_weight" value="$(arg reachability_weight)" />
     <param name="per_task_candidate_count" value="$(arg per_task_candidate_count)" />
+    <param name="ga_population_size" value="$(arg ga_population_size)" />
+    <param name="ga_generations" value="$(arg ga_generations)" />
+    <param name="ga_mutation_rate" value="$(arg ga_mutation_rate)" />
     <param name="allow_unreachable_candidate_dispatch" value="$(arg allow_unreachable_candidate_dispatch)" />
     <param name="ik_seed_trials" value="$(arg scheduler_ik_seed_trials)" />
     <param name="ik_timeout_sec" value="$(arg scheduler_ik_timeout_sec)" />

@@ -169,7 +169,9 @@ catkin_install_python(PROGRAMS
   scripts/grasp_from_sam.py
   scripts/ik_filter.py
   scripts/llm_planner.py
+  scripts/plot_ga_convergence.py
   scripts/pointcloud_debugger.py
+  scripts/random_order_scheduler.py
   scripts/sam_node.py
   scripts/semantic_reranker.py
   scripts/task_command_cli.py
