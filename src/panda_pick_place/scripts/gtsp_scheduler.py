@@ -91,6 +91,10 @@ class GTSPScheduler:
         self.semantic_weight = float(rospy.get_param('~semantic_weight', 0.0))
         self.reachability_weight = float(rospy.get_param('~reachability_weight', 0.15))
         self.per_task_candidate_count = max(1, int(rospy.get_param('~per_task_candidate_count', 4)))
+        self.ga_population_size = max(2, int(rospy.get_param('~ga_population_size', 50)))
+        self.ga_generations = max(1, int(rospy.get_param('~ga_generations', 30)))
+        self.ga_mutation_rate = min(1.0, max(0.0, float(rospy.get_param('~ga_mutation_rate', 0.2))))
+        self.last_ga_convergence_curve = []
         self.allow_unreachable_candidate_dispatch = bool(
             rospy.get_param('~allow_unreachable_candidate_dispatch', True)
         )
@@ -125,13 +129,16 @@ class GTSPScheduler:
         self.pub_schedule_metrics = rospy.Publisher('/scheduler/run_metrics', String, queue_size=10)
 
         rospy.loginfo(
-            "🚀 多目标 GTSP 任务调度中枢已全面启动并待命！pose_topic=%s info_topic=%s fallback=(%s,%s) semantic_weight=%.3f per_task_candidate_count=%d unreachable_dispatch=%s",
+            "🚀 多目标 GTSP 任务调度中枢已全面启动并待命！pose_topic=%s info_topic=%s fallback=(%s,%s) semantic_weight=%.3f per_task_candidate_count=%d ga=(pop=%d, gen=%d, mut=%.2f) unreachable_dispatch=%s",
             self.pose_topic,
             self.info_topic,
             self.fallback_pose_topic,
             self.fallback_info_topic,
             self.semantic_weight,
             self.per_task_candidate_count,
+            self.ga_population_size,
+            self.ga_generations,
+            self.ga_mutation_rate,
             str(self.allow_unreachable_candidate_dispatch).lower(),
         )
 
@@ -504,6 +511,13 @@ class GTSPScheduler:
                         "planned_joint_cost_rad": 0.0,
                         "scheduler_time_sec": float(scheduler_time_sec),
                         "semantic_weight": float(self.semantic_weight),
+                        "ga_population_size": int(self.ga_population_size),
+                        "ga_generations": int(self.ga_generations),
+                        "ga_mutation_rate": float(self.ga_mutation_rate),
+                        "ga_convergence_curve": [],
+                        "ga_initial_best_cost_rad": "",
+                        "ga_final_best_cost_rad": "",
+                        "ga_improvement_ratio": "",
                         "candidate_source": str(candidate_source),
                         "run_start_sim_time": rospy.Time.now().to_sec(),
                         "done_count": 0,
@@ -537,6 +551,12 @@ class GTSPScheduler:
         best_sequence = self.run_genetic_algorithm(valid_clusters, current_joints, cluster_reachability)
         total_joint_cost = self.calc_sequence_cost(best_sequence, valid_clusters, current_joints)
         scheduler_time_sec = time.time() - schedule_start_wall
+        ga_curve = list(self.last_ga_convergence_curve)
+        ga_initial = float(ga_curve[0]) if ga_curve else ""
+        ga_final = float(ga_curve[-1]) if ga_curve else ""
+        ga_improvement = ""
+        if ga_curve and ga_curve[0] > 1e-9:
+            ga_improvement = float((ga_curve[0] - ga_curve[-1]) / ga_curve[0])
         
         # 将最优序列转化为任务队列（每个目标下发多个备选姿态，首个为 GA 选中姿态）
         self.task_queue = []
@@ -595,6 +615,13 @@ class GTSPScheduler:
             "planned_joint_cost_rad": float(total_joint_cost),
             "scheduler_time_sec": float(scheduler_time_sec),
             "semantic_weight": float(self.semantic_weight),
+            "ga_population_size": int(self.ga_population_size),
+            "ga_generations": int(self.ga_generations),
+            "ga_mutation_rate": float(self.ga_mutation_rate),
+            "ga_convergence_curve": ga_curve,
+            "ga_initial_best_cost_rad": ga_initial,
+            "ga_final_best_cost_rad": ga_final,
+            "ga_improvement_ratio": ga_improvement,
             "candidate_source": str(candidate_source),
             "run_start_sim_time": rospy.Time.now().to_sec(),
             "done_count": 0,
@@ -621,9 +648,10 @@ class GTSPScheduler:
 
     def run_genetic_algorithm(self, clusters, start_joints, cluster_reachability=None):
         """核心算法：基于遗传算法的 GTSP 路径规划"""
-        POP_SIZE = 50       # 种群大小
-        GENERATIONS = 30    # 迭代代数
-        MUTATION_RATE = 0.2 # 变异率
+        pop_size = int(self.ga_population_size)
+        generations = int(self.ga_generations)
+        mutation_rate = float(self.ga_mutation_rate)
+        self.last_ga_convergence_curve = []
 
         cluster_ids = list(clusters.keys())
         num_targets = len(cluster_ids)
@@ -640,7 +668,7 @@ class GTSPScheduler:
 
         # 初始化种群：随机生成抓取顺序和每个物体的姿态选择
         population = []
-        for _ in range(POP_SIZE):
+        for _ in range(pop_size):
             seq = copy.deepcopy(cluster_ids)
             random.shuffle(seq)
             choices = {cid: random.randint(0, len(clusters[cid])-1) for cid in cluster_ids}
@@ -664,9 +692,13 @@ class GTSPScheduler:
                 curr_q = target_q
             return total_cost
 
-        # 进化迭代
-        for gen in range(GENERATIONS):
-            fitness_scores = [1.0 / (calc_cost(chrom) + 1e-6) for chrom in population]
+        current_costs = [calc_cost(chrom) for chrom in population]
+        best_so_far = float(np.min(current_costs)) if current_costs else 0.0
+        self.last_ga_convergence_curve.append(best_so_far)
+
+        # 进化迭代；曲线记录第 0 代初始种群以及每一代后的历史最优代价。
+        for _gen in range(generations):
+            fitness_scores = [1.0 / (cost + 1e-6) for cost in current_costs]
             total_fitness = sum(fitness_scores)
             probs = [f / total_fitness for f in fitness_scores]
             
@@ -675,33 +707,40 @@ class GTSPScheduler:
             best_idx = np.argmax(fitness_scores)
             new_population.append(copy.deepcopy(population[best_idx]))
             
-            while len(new_population) < POP_SIZE:
+            while len(new_population) < pop_size:
                 # 轮盘赌选择
-                p1 = population[np.random.choice(POP_SIZE, p=probs)]
-                p2 = population[np.random.choice(POP_SIZE, p=probs)]
+                p1 = population[np.random.choice(pop_size, p=probs)]
+                p2 = population[np.random.choice(pop_size, p=probs)]
                 
                 # 交叉 (随机继承父母的姿态选择)
                 child_seq = copy.deepcopy(p1[0]) 
                 child_choices = {cid: (p1[1][cid] if random.random() > 0.5 else p2[1][cid]) for cid in cluster_ids}
                     
                 # 变异 (随机交换抓取顺序)
-                if random.random() < MUTATION_RATE and num_targets > 1:
+                if random.random() < mutation_rate and num_targets > 1:
                     idx1, idx2 = random.sample(range(num_targets), 2)
                     child_seq[idx1], child_seq[idx2] = child_seq[idx2], child_seq[idx1]
                     
                 # 变异 (随机更换抓取姿态)
-                if random.random() < MUTATION_RATE:
+                if random.random() < mutation_rate:
                     mut_cid = random.choice(cluster_ids)
                     child_choices[mut_cid] = random.randint(0, len(clusters[mut_cid])-1)
                     
                 new_population.append((child_seq, child_choices))
             population = new_population
+            current_costs = [calc_cost(chrom) for chrom in population]
+            best_so_far = min(best_so_far, float(np.min(current_costs)))
+            self.last_ga_convergence_curve.append(best_so_far)
 
         # 选出这几十代里进化出的最优个体
-        final_costs = [calc_cost(chrom) for chrom in population]
+        final_costs = current_costs
         best_chrom = population[np.argmin(final_costs)]
         
-        rospy.loginfo(f"📉 算法收敛！最小总关节代价: {np.min(final_costs):.4f} rad")
+        rospy.loginfo(
+            "📉 算法收敛！最小总关节代价: %.4f rad，收敛曲线点数=%d",
+            float(np.min(final_costs)),
+            len(self.last_ga_convergence_curve),
+        )
         return [(cid, best_chrom[1][cid]) for cid in best_chrom[0]]
 
     def calc_sequence_cost(self, best_sequence, clusters, start_joints):
