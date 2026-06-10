@@ -7,7 +7,7 @@
        ============================================================ -->
 
   <!-- ===== 参数：与 semantic_vlm_stack.launch 完全一致 ===== -->
-  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON /home/lhj/anaconda3/envs/anygrasp_env/bin/python)" />
+  <arg name="anygrasp_python" default="$(optenv ANYGRASP_PYTHON python3)" />
   <arg name="anygrasp_ld_preload" default="$(optenv ANYGRASP_LD_PRELOAD)" />
   <arg name="vlm_api_key" default="$(optenv DASHSCOPE_API_KEY sk-a85a76a8ada94ef2886ecd43bf0f9e80)" />
   <arg name="vlm_model" default="qwen-vl-max-latest" />
